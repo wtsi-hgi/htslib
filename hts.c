@@ -1351,12 +1351,26 @@ void hts_itr_destroy(hts_itr_t *iter)
     if (iter) { free(iter->off); free(iter->bins.a); free(iter); }
 }
 
-int hts_parse_decimal(const char *str, char **end)
+int hts_parse_decimal(const char *instr, const char *inend, char **endptr)
 {
-    char *s;
-    int i = strtol(str, &s, 10);
-    if (*s == '.' || *s == 'e' || *s == 'E') i = strtod(str, &s);
-    *end = s;
+    size_t len = inend? (inend - instr) : strlen(instr);
+    int i, j, ncommas = 0;
+
+    char *str = (char *) alloca(len + 1);
+    int *extra = (int *) alloca((len + 1) * sizeof (int));
+    char *end;
+
+    for (i = j = 0; i < len; i++) {
+        if (instr[i] == ',') ncommas++;
+        else extra[j] = ncommas, str[j++] = instr[i];
+    }
+    extra[j] = ncommas;
+    str[j] = '\0';
+
+    i = strtol(str, &end, 10);
+    if (*end == '.' || *end == 'e' || *end == 'E') i = strtod(str, &end);
+
+    if (endptr) *endptr = (char *) instr + (end - str) + extra[end - str];
     return i;
 }
 
@@ -1383,8 +1397,8 @@ const char *hts_parse_reg(const char *s, int *beg, int *end)
         for (i = name_end + 1, k = 0; i < l; ++i)
             if (s[i] != ',') tmp[k++] = s[i];
         tmp[k] = 0;
-        if ((*beg = hts_parse_decimal(tmp, &tmp) - 1) < 0) *beg = 0;
-        *end = *tmp? hts_parse_decimal(tmp + 1, &tmp) : INT_MAX;
+        if ((*beg = hts_parse_decimal(tmp, NULL, &tmp) - 1) < 0) *beg = 0;
+        *end = *tmp? hts_parse_decimal(tmp + 1, NULL, &tmp) : INT_MAX;
         if (*beg > *end) name_end = l;
     }
     if (name_end == l) *beg = 0, *end = INT_MAX;
