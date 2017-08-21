@@ -23,90 +23,24 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.  */
 
+#include <config.h>
+
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
+#include <getopt.h>
 
 #include "cram/cram.h"
 
 #include "htslib/sam.h"
 
-typedef struct hts_opt {
-    enum cram_option opt;
-    union {
-        int i;
-        char *s;
-    } val;
-    struct hts_opt *next;
-} hts_opt;
-
-/*
- * Parses arg and appends it to the option list.
- * Returns 0 on success;
- *        -1 on failure.
- */
-int add_option(hts_opt **opts, char *arg) {
-    hts_opt *o, *t;
-    char *cp;
-
-    if (!(cp = strchr(arg, '=')))
-        cp = "1"; // assume boolean
-    else
-        *cp++ = 0;
-
-    if (!(o =  malloc(sizeof(*o))))
-        return -1;
-
-    if (strcmp(arg, "DECODE_MD") == 0)
-        o->opt = CRAM_OPT_DECODE_MD, o->val.i = atoi(cp);
-    else if (strcmp(arg, "VERBOSITY") == 0)
-        o->opt = CRAM_OPT_VERBOSITY, o->val.i = atoi(cp);
-    else if (strcmp(arg, "SEQS_PER_SLICE") == 0)
-        o->opt = CRAM_OPT_SEQS_PER_SLICE, o->val.i = atoi(cp);
-    else if (strcmp(arg, "SLICES_PER_CONTAINER") == 0)
-        o->opt = CRAM_OPT_SLICES_PER_CONTAINER, o->val.i = atoi(cp);
-    else if (strcmp(arg, "EMBED_REF") == 0)
-        o->opt = CRAM_OPT_EMBED_REF, o->val.i = atoi(cp);
-    else if (strcmp(arg, "NO_REF") == 0)
-        o->opt = CRAM_OPT_NO_REF, o->val.i = atoi(cp);
-    else if (strcmp(arg, "IGNORE_MD5") == 0)
-        o->opt = CRAM_OPT_IGNORE_MD5, o->val.i = atoi(cp);
-    else if (strcmp(arg, "USE_BZIP2") == 0)
-        o->opt = CRAM_OPT_USE_BZIP2, o->val.i = atoi(cp);
-    else if (strcmp(arg, "USE_RANS") == 0)
-        o->opt = CRAM_OPT_USE_RANS, o->val.i = atoi(cp);
-    else if (strcmp(arg, "USE_LZMA") == 0)
-        o->opt = CRAM_OPT_USE_LZMA, o->val.i = atoi(cp);
-    else if (strcmp(arg, "REFERENCE") == 0)
-        o->opt = CRAM_OPT_REFERENCE, o->val.s = cp;
-    else if (strcmp(arg, "VERSION") == 0)
-        o->opt = CRAM_OPT_VERSION, o->val.s =cp;
-    else if (strcmp(arg, "MULTI_SEQ_PER_SLICE") == 0)
-        o->opt = CRAM_OPT_MULTI_SEQ_PER_SLICE, o->val.i = atoi(cp);
-    else if (strcmp(arg, "NTHREADS") == 0)
-        o->opt = CRAM_OPT_NTHREADS, o->val.i = atoi(cp);
-    else if (strcmp(arg, "REQUIRED_FIELDS") == 0)
-        o->opt = CRAM_OPT_REQUIRED_FIELDS, o->val.i = strtol(cp, NULL, 0);
-    else {
-        fprintf(stderr, "Unknown option '%s'\n", arg);
-        free(o);
-        return -1;
-    }
-
-    o->next = NULL;
-
-    if (*opts) {
-        t = *opts;
-        while (t->next)
-            t = t->next;
-        t->next = o;
-    } else {
-        *opts = o;
-    }
-
-    return 0;
-}
+enum test_op {
+    READ_COMPRESSED  = 1,
+    WRITE_COMPRESSED = 2,
+    READ_CRAM        = 4,
+    WRITE_CRAM       = 8
+};
 
 int main(int argc, char *argv[])
 {
@@ -117,34 +51,54 @@ int main(int argc, char *argv[])
     bam_hdr_t *h;
     bam1_t *b;
     htsFile *out;
-    char modew[8];
+    char modew[800];
     int r = 0, exit_code = 0;
-    hts_opt *in_opts = NULL, *out_opts = NULL, *last = NULL;
+    hts_opt *in_opts = NULL, *out_opts = NULL;
     int nreads = 0;
+    int extra_hdr_nuls = 0;
     int benchmark = 0;
+    int nthreads = 0; // shared pool
 
-    while ((c = getopt(argc, argv, "IbDCSl:t:i:o:N:B")) >= 0) {
+    while ((c = getopt(argc, argv, "DSIt:i:bCl:o:N:BZ:@:")) >= 0) {
         switch (c) {
-        case 'S': flag |= 1; break;
-        case 'b': flag |= 2; break;
-        case 'D': flag |= 4; break;
-        case 'C': flag |= 8; break;
-        case 'B': benchmark = 1; break;
-        case 'l': clevel = atoi(optarg); flag |= 2; break;
-        case 't': fn_ref = optarg; break;
+        case 'D': flag |= READ_CRAM; break;
+        case 'S': flag |= READ_COMPRESSED; break;
         case 'I': ignore_sam_err = 1; break;
-        case 'i': if (add_option(&in_opts,  optarg)) return 1; break;
-        case 'o': if (add_option(&out_opts, optarg)) return 1; break;
-        case 'N': nreads = atoi(optarg);
+        case 't': fn_ref = optarg; break;
+        case 'i': if (hts_opt_add(&in_opts, optarg)) return 1; break;
+        case 'b': flag |= WRITE_COMPRESSED; break;
+        case 'C': flag |= WRITE_CRAM; break;
+        case 'l': clevel = atoi(optarg); flag |= WRITE_COMPRESSED; break;
+        case 'o': if (hts_opt_add(&out_opts, optarg)) return 1; break;
+        case 'N': nreads = atoi(optarg); break;
+        case 'B': benchmark = 1; break;
+        case 'Z': extra_hdr_nuls = atoi(optarg); break;
+        case '@': nthreads = atoi(optarg); break;
         }
     }
     if (argc == optind) {
-        fprintf(stderr, "Usage: samview [-bSCSIB] [-N num_reads] [-l level] [-o option=value] <in.bam>|<in.sam>|<in.cram> [region]\n");
+        fprintf(stderr, "Usage: test_view [-DSI] [-t fn_ref] [-i option=value] [-bC] [-l level] [-o option=value] [-N num_reads] [-B] [-Z hdr_nuls] [-@ num_threads] <in.bam>|<in.sam>|<in.cram> [region]\n");
+        fprintf(stderr, "\n");
+        fprintf(stderr, "-D: read CRAM format (mode 'c')\n");
+        fprintf(stderr, "-S: read compressed BCF, BAM, FAI (mode 'b')\n");
+        fprintf(stderr, "-I: ignore SAM parsing errors\n");
+        fprintf(stderr, "-t: fn_ref: load CRAM references from the specificed fasta file instead of @SQ headers when writing a CRAM file\n");
+        fprintf(stderr, "-i: option=value: set an option for CRAM input\n");
+        fprintf(stderr, "\n");
+        fprintf(stderr, "-b: write compressed BCF, BAM, FAI (mode 'b')\n");
+        fprintf(stderr, "-C: write CRAM format (mode 'c')\n");
+        fprintf(stderr, "-l 0-9: set zlib compression level\n");
+        fprintf(stderr, "-o option=value: set an option for CRAM output\n");
+        fprintf(stderr, "-N: num_reads: limit the output to the first num_reads reads\n");
+        fprintf(stderr, "\n");
+        fprintf(stderr, "-B: enable benchmarking\n");
+        fprintf(stderr, "-Z hdr_nuls: append specified number of null bytes to the SAM header\n");
+        fprintf(stderr, "-@ num_threads: use thread pool with specified number of threads\n");
         return 1;
     }
     strcpy(moder, "r");
-    if (flag&4) strcat(moder, "c");
-    else if ((flag&1) == 0) strcat(moder, "b");
+    if (flag & READ_CRAM) strcat(moder, "c");
+    else if ((flag & READ_COMPRESSED) == 0) strcat(moder, "b");
 
     in = sam_open(argv[optind], moder);
     if (in == NULL) {
@@ -152,13 +106,28 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
     h = sam_hdr_read(in);
+    if (h == NULL) {
+        fprintf(stderr, "Couldn't read header for \"%s\"\n", argv[optind]);
+        return EXIT_FAILURE;
+    }
     h->ignore_sam_err = ignore_sam_err;
+    if (extra_hdr_nuls) {
+        char *new_text = realloc(h->text, h->l_text + extra_hdr_nuls);
+        if (new_text == NULL) {
+            fprintf(stderr, "Error reallocing header text\n");
+            return EXIT_FAILURE;
+        }
+        h->text = new_text;
+        memset(&h->text[h->l_text], 0, extra_hdr_nuls);
+        h->l_text += extra_hdr_nuls;
+    }
+
     b = bam_init1();
 
     strcpy(modew, "w");
     if (clevel >= 0 && clevel <= 9) sprintf(modew + 1, "%d", clevel);
-    if (flag&8) strcat(modew, "c");
-    else if (flag&2) strcat(modew, "b");
+    if (flag & WRITE_CRAM) strcat(modew, "c");
+    else if (flag & WRITE_COMPRESSED) strcat(modew, "b");
     out = hts_open("-", modew);
     if (out == NULL) {
         fprintf(stderr, "Error opening standard output\n");
@@ -166,7 +135,7 @@ int main(int argc, char *argv[])
     }
 
     /* CRAM output */
-    if (flag & 8) {
+    if (flag & WRITE_CRAM) {
         int ret;
 
         // Parse input header and use for CRAM output
@@ -184,19 +153,32 @@ int main(int argc, char *argv[])
     }
 
     // Process any options; currently cram only.
-    for (; in_opts;  in_opts = (last=in_opts)->next, free(last)) {
-        hts_set_opt(in,  in_opts->opt,  in_opts->val);
-        if (in_opts->opt == CRAM_OPT_REFERENCE)
-            if (hts_set_opt(out,  in_opts->opt,  in_opts->val) != 0)
-                return EXIT_FAILURE;
-    }
-    for (; out_opts;  out_opts = (last=out_opts)->next, free(last))
-        if (hts_set_opt(out, out_opts->opt,  out_opts->val) != 0)
-            return EXIT_FAILURE;
+    if (hts_opt_apply(in, in_opts))
+        return EXIT_FAILURE;
+    hts_opt_free(in_opts);
 
-    if (!benchmark)
-        sam_hdr_write(out, h);
-    if (optind + 1 < argc && !(flag&1)) { // BAM input and has a region
+    if (hts_opt_apply(out, out_opts))
+        return EXIT_FAILURE;
+    hts_opt_free(out_opts);
+
+    // Create and share the thread pool
+    htsThreadPool p = {NULL, 0};
+    if (nthreads > 0) {
+        p.pool = hts_tpool_init(nthreads);
+        if (!p.pool) {
+            fprintf(stderr, "Error creating thread pool\n");
+            exit_code = 1;
+        } else {
+            hts_set_opt(in,  HTS_OPT_THREAD_POOL, &p);
+            hts_set_opt(out, HTS_OPT_THREAD_POOL, &p);
+        }
+    }
+
+    if (!benchmark && sam_hdr_write(out, h) < 0) {
+        fprintf(stderr, "Error writing output header.\n");
+        exit_code = 1;
+    }
+    if (optind + 1 < argc && !(flag & READ_COMPRESSED)) { // BAM input and has a region
         int i;
         hts_idx_t *idx;
         if ((idx = sam_index_load(in, argv[optind])) == 0) {
@@ -250,6 +232,9 @@ int main(int argc, char *argv[])
         fprintf(stderr, "Error closing input.\n");
         exit_code = 1;
     }
+
+    if (p.pool)
+        hts_tpool_destroy(p.pool);
 
     return exit_code;
 }

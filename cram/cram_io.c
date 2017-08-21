@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2012-2014 Genome Research Ltd.
+Copyright (c) 2012-2016 Genome Research Ltd.
 Author: James Bonfield <jkb@sanger.ac.uk>
 
 Redistribution and use in source and binary forms, with or without 
@@ -62,7 +62,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <math.h>
-#include <ctype.h>
+#include <time.h>
+#include <stdint.h>
 
 #include "cram/cram.h"
 #include "cram/os.h"
@@ -84,6 +85,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "htslib/hfile.h"
 #include "htslib/bgzf.h"
 #include "htslib/faidx.h"
+#include "hts_internal.h"
+
+#ifndef PATH_MAX
+#define PATH_MAX FILENAME_MAX
+#endif
 
 #define TRIAL_SPAN 50
 #define NTRIALS 3
@@ -217,12 +223,15 @@ int itf8_decode_crc(cram_fd *fd, int32_t *val_p, uint32_t *crc) {
 	return 4;
 
     case 4: // really 3.5 more, why make it different?
-	val = (val<<8) |   (c[1]=hgetc(fd->fp));
-	val = (val<<8) |   (c[2]=hgetc(fd->fp));
-	val = (val<<8) |   (c[3]=hgetc(fd->fp));
-	val = (val<<4) | (((c[4]=hgetc(fd->fp))) & 0x0f);
-	*val_p = val;
-	*crc = crc32(*crc, c, 5);
+        {
+            uint32_t uv = val;
+            uv = (uv<<8) |   (c[1]=hgetc(fd->fp));
+            uv = (uv<<8) |   (c[2]=hgetc(fd->fp));
+            uv = (uv<<8) |   (c[3]=hgetc(fd->fp));
+            uv = (uv<<4) | (((c[4]=hgetc(fd->fp))) & 0x0f);
+            *val_p = uv < 0x80000000UL ? uv : -((int32_t) (0xffffffffUL - uv)) - 1;
+            *crc = crc32(*crc, c, 5);
+        }
     }
 
     return 5;
@@ -240,205 +249,33 @@ int itf8_encode(cram_fd *fd, int32_t val) {
 }
  
 const int itf8_bytes[16] = {
-    1, 1, 1, 1, 1, 1, 1, 1,
-    2, 2, 2, 2, 3, 3, 4, 5
+    1, 1, 1, 1,  1, 1, 1, 1,
+    2, 2, 2, 2,  3, 3, 4, 5
 };
 
-#ifndef ITF8_MACROS
-/*
- * As above, but decoding from memory
- */
-int itf8_get(char *cp, int32_t *val_p) {
-    unsigned char *up = (unsigned char *)cp;
-    
-    if (up[0] < 0x80) {
-	*val_p =   up[0];
-	return 1;
-    } else if (up[0] < 0xc0) {
-	*val_p = ((up[0] <<8) |  up[1])                           & 0x3fff;
-	return 2;
-    } else if (up[0] < 0xe0) {
-	*val_p = ((up[0]<<16) | (up[1]<< 8) |  up[2])             & 0x1fffff;
-	return 3;
-    } else if (up[0] < 0xf0) {
-	*val_p = ((up[0]<<24) | (up[1]<<16) | (up[2]<<8) | up[3]) & 0x0fffffff;
-	return 4;
-    } else {
-	*val_p = ((up[0] & 0x0f)<<28) | (up[1]<<20) | (up[2]<<12) | (up[3]<<4) | (up[4] & 0x0f);
-	return 5;
-    }
-}
+const int ltf8_bytes[256] = {
+    1, 1, 1, 1,  1, 1, 1, 1,  1, 1, 1, 1,  1, 1, 1, 1,
+    1, 1, 1, 1,  1, 1, 1, 1,  1, 1, 1, 1,  1, 1, 1, 1,
+    1, 1, 1, 1,  1, 1, 1, 1,  1, 1, 1, 1,  1, 1, 1, 1,
+    1, 1, 1, 1,  1, 1, 1, 1,  1, 1, 1, 1,  1, 1, 1, 1,
 
-/*
- * Stores a value to memory in ITF-8 format.
- *
- * Returns the number of bytes required to store the number.
- * This is a maximum of 5 bytes.
- */
-int itf8_put(char *cp, int32_t val) {
-    if        (!(val & ~0x00000007f)) { // 1 byte
-	*cp = val;
-	return 1;
-    } else if (!(val & ~0x00003fff)) { // 2 byte
-	*cp++ = (val >> 8 ) | 0x80;
-	*cp   = val & 0xff;
-	return 2;
-    } else if (!(val & ~0x01fffff)) { // 3 byte
-	*cp++ = (val >> 16) | 0xc0;
-	*cp++ = (val >> 8 ) & 0xff;
-	*cp   = val & 0xff;
-	return 3;
-    } else if (!(val & ~0x0fffffff)) { // 4 byte
-	*cp++ = (val >> 24) | 0xe0;
-	*cp++ = (val >> 16) & 0xff;
-	*cp++ = (val >> 8 ) & 0xff;
-	*cp   = val & 0xff;
-	return 4;
-    } else {                           // 5 byte
-	*cp++ = 0xf0 | ((val>>28) & 0xff);
-	*cp++ = (val >> 20) & 0xff;
-	*cp++ = (val >> 12) & 0xff;
-	*cp++ = (val >> 4 ) & 0xff;
-	*cp = val & 0x0f;
-	return 5;
-    }
-}
-#endif
+    1, 1, 1, 1,  1, 1, 1, 1,  1, 1, 1, 1,  1, 1, 1, 1,
+    1, 1, 1, 1,  1, 1, 1, 1,  1, 1, 1, 1,  1, 1, 1, 1,
+    1, 1, 1, 1,  1, 1, 1, 1,  1, 1, 1, 1,  1, 1, 1, 1,
+    1, 1, 1, 1,  1, 1, 1, 1,  1, 1, 1, 1,  1, 1, 1, 1,
 
-/* 64-bit itf8 variant */
-int ltf8_put(char *cp, int64_t val) {
-    if        (!(val & ~((1LL<<7)-1))) {
-	*cp = val;
-	return 1;
-    } else if (!(val & ~((1LL<<(6+8))-1))) {
-	*cp++ = (val >> 8 ) | 0x80;
-	*cp   = val & 0xff;
-	return 2;
-    } else if (!(val & ~((1LL<<(5+2*8))-1))) {
-	*cp++ = (val >> 16) | 0xc0;
-	*cp++ = (val >> 8 ) & 0xff;
-	*cp   = val & 0xff;
-	return 3;
-    } else if (!(val & ~((1LL<<(4+3*8))-1))) {
-	*cp++ = (val >> 24) | 0xe0;
-	*cp++ = (val >> 16) & 0xff;
-	*cp++ = (val >> 8 ) & 0xff;
-	*cp   = val & 0xff;
-	return 4;
-    } else if (!(val & ~((1LL<<(3+4*8))-1))) {
-	*cp++ = (val >> 32) | 0xf0;
-	*cp++ = (val >> 24) & 0xff;
-	*cp++ = (val >> 16) & 0xff;
-	*cp++ = (val >> 8 ) & 0xff;
-	*cp   = val & 0xff;
-	return 5;
-    } else if (!(val & ~((1LL<<(2+5*8))-1))) {
-	*cp++ = (val >> 40) | 0xf8;
-	*cp++ = (val >> 32) & 0xff;
-	*cp++ = (val >> 24) & 0xff;
-	*cp++ = (val >> 16) & 0xff;
-	*cp++ = (val >> 8 ) & 0xff;
-	*cp   = val & 0xff;
-	return 6;
-    } else if (!(val & ~((1LL<<(1+6*8))-1))) {
-	*cp++ = (val >> 48) | 0xfc;
-	*cp++ = (val >> 40) & 0xff;
-	*cp++ = (val >> 32) & 0xff;
-	*cp++ = (val >> 24) & 0xff;
-	*cp++ = (val >> 16) & 0xff;
-	*cp++ = (val >> 8 ) & 0xff;
-	*cp   = val & 0xff;
-	return 7;
-    } else if (!(val & ~((1LL<<(7*8))-1))) {
-	*cp++ = (val >> 56) | 0xfe;
-	*cp++ = (val >> 48) & 0xff;
-	*cp++ = (val >> 40) & 0xff;
-	*cp++ = (val >> 32) & 0xff;
-	*cp++ = (val >> 24) & 0xff;
-	*cp++ = (val >> 16) & 0xff;
-	*cp++ = (val >> 8 ) & 0xff;
-	*cp   = val & 0xff;
-	return 8;
-    } else {
-	*cp++ = 0xff;
-	*cp++ = (val >> 56) & 0xff;
-	*cp++ = (val >> 48) & 0xff;
-	*cp++ = (val >> 40) & 0xff;
-	*cp++ = (val >> 32) & 0xff;
-	*cp++ = (val >> 24) & 0xff;
-	*cp++ = (val >> 16) & 0xff;
-	*cp++ = (val >> 8 ) & 0xff;
-	*cp   = val & 0xff;
-	return 9;
-    }
-}
+    2, 2, 2, 2,  2, 2, 2, 2,  2, 2, 2, 2,  2, 2, 2, 2,
+    2, 2, 2, 2,  2, 2, 2, 2,  2, 2, 2, 2,  2, 2, 2, 2,
+    2, 2, 2, 2,  2, 2, 2, 2,  2, 2, 2, 2,  2, 2, 2, 2,
+    2, 2, 2, 2,  2, 2, 2, 2,  2, 2, 2, 2,  2, 2, 2, 2,
 
-int ltf8_get(char *cp, int64_t *val_p) {
-    unsigned char *up = (unsigned char *)cp;
-    
-    if (up[0] < 0x80) {
-	*val_p =   up[0];
-	return 1;
-    } else if (up[0] < 0xc0) {
-	*val_p = (((uint64_t)up[0]<< 8) |
-		   (uint64_t)up[1]) & (((1LL<<(6+8)))-1);
-	return 2;
-    } else if (up[0] < 0xe0) {
-	*val_p = (((uint64_t)up[0]<<16) |
-		  ((uint64_t)up[1]<< 8) |
-		   (uint64_t)up[2]) & ((1LL<<(5+2*8))-1);
-	return 3;
-    } else if (up[0] < 0xf0) {
-	*val_p = (((uint64_t)up[0]<<24) |
-		  ((uint64_t)up[1]<<16) |
-		  ((uint64_t)up[2]<< 8) |
-		   (uint64_t)up[3]) & ((1LL<<(4+3*8))-1);
-	return 4;
-    } else if (up[0] < 0xf8) {
-	*val_p = (((uint64_t)up[0]<<32) |
-		  ((uint64_t)up[1]<<24) |
-		  ((uint64_t)up[2]<<16) |
-		  ((uint64_t)up[3]<< 8) |
-		   (uint64_t)up[4]) & ((1LL<<(3+4*8))-1);
-	return 5;
-    } else if (up[0] < 0xfc) {
-	*val_p = (((uint64_t)up[0]<<40) |
-		  ((uint64_t)up[1]<<32) |
-		  ((uint64_t)up[2]<<24) |
-		  ((uint64_t)up[3]<<16) |
-		  ((uint64_t)up[4]<< 8) |
-		   (uint64_t)up[5]) & ((1LL<<(2+5*8))-1);
-	return 6;
-    } else if (up[0] < 0xfe) {
-	*val_p = (((uint64_t)up[0]<<48) |
-		  ((uint64_t)up[1]<<40) |
-		  ((uint64_t)up[2]<<32) |
-		  ((uint64_t)up[3]<<24) |
-		  ((uint64_t)up[4]<<16) |
-		  ((uint64_t)up[5]<< 8) |
-		   (uint64_t)up[6]) & ((1LL<<(1+6*8))-1);
-	return 7;
-    } else if (up[0] < 0xff) {
-	*val_p = (((uint64_t)up[1]<<48) |
-		  ((uint64_t)up[2]<<40) |
-		  ((uint64_t)up[3]<<32) |
-		  ((uint64_t)up[4]<<24) |
-		  ((uint64_t)up[5]<<16) |
-		  ((uint64_t)up[6]<< 8) |
-		   (uint64_t)up[7]) & ((1LL<<(7*8))-1);
-	return 8;
-    } else {
-	*val_p = (((uint64_t)up[1]<<56) |
-		  ((uint64_t)up[2]<<48) |
-		  ((uint64_t)up[3]<<40) |
-		  ((uint64_t)up[4]<<32) |
-		  ((uint64_t)up[5]<<24) |
-		  ((uint64_t)up[6]<<16) |
-		  ((uint64_t)up[7]<< 8) |
-		   (uint64_t)up[8]);
-	return 9;
-    }
-}
+    3, 3, 3, 3,  3, 3, 3, 3,  3, 3, 3, 3,  3, 3, 3, 3,
+    3, 3, 3, 3,  3, 3, 3, 3,  3, 3, 3, 3,  3, 3, 3, 3,
+
+    4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,
+
+    5, 5, 5, 5,  5, 5, 5, 5,  6, 6, 6, 6,  7, 7, 8, 9
+};
 
 /*
  * LEGACY: consider using ltf8_decode_crc.
@@ -662,7 +499,7 @@ int int32_encode(cram_fd *fd, int32_t val) {
 }
 
 /* As int32_decoded/encode, but from/to blocks instead of cram_fd */
-int int32_get(cram_block *b, int32_t *val) {
+int int32_get_blk(cram_block *b, int32_t *val) {
     if (b->uncomp_size - BLOCK_SIZE(b) < 4)
 	return -1;
 
@@ -676,7 +513,7 @@ int int32_get(cram_block *b, int32_t *val) {
 }
 
 /* As int32_decoded/encode, but from/to blocks instead of cram_fd */
-int int32_put(cram_block *b, int32_t val) {
+int int32_put_blk(cram_block *b, int32_t val) {
     unsigned char cp[4];
     cp[0] = ( val      & 0xff);
     cp[1] = ((val>>8)  & 0xff);
@@ -717,7 +554,7 @@ char *zlib_mem_inflate(char *cdata, size_t csize, size_t *size) {
     //err = inflateInit(&s);
     err = inflateInit2(&s, 15 + 32);
     if (err != Z_OK) {
-	fprintf(stderr, "zlib inflateInit error: %s\n", s.msg);
+	hts_log_error("Call to zlib inflateInit failed: %s", s.msg);
 	free(data);
 	return NULL;
     }
@@ -733,7 +570,7 @@ char *zlib_mem_inflate(char *cdata, size_t csize, size_t *size) {
 	    break;
 
 	if (err != Z_OK) {
-	    fprintf(stderr, "zlib inflate error: %s\n", s.msg);
+	    hts_log_error("Call to zlib inflate failed: %s", s.msg);
 	    if (data)
 		free(data);
 	    return NULL;
@@ -781,7 +618,7 @@ static char *zlib_mem_deflate(char *data, size_t size, size_t *cdata_size,
 
     err = deflateInit2(&s, level, Z_DEFLATED, 15|16, 9, strat);
     if (err != Z_OK) {
-	fprintf(stderr, "zlib deflateInit2 error: %s\n", s.msg);
+	hts_log_error("Call to zlib deflateInit2 failed: %s", s.msg);
 	return NULL;
     }
 
@@ -790,23 +627,23 @@ static char *zlib_mem_deflate(char *data, size_t size, size_t *cdata_size,
 	s.next_out = &cdata[cdata_pos];
 	s.avail_out = cdata_alloc - cdata_pos;
 	if (cdata_alloc - cdata_pos <= 0) {
-	    fprintf(stderr, "Deflate produced larger output than expected. Abort\n"); 
+	    hts_log_error("Deflate produced larger output than expected");
 	    return NULL;
 	}
 	err = deflate(&s, Z_NO_FLUSH);
 	cdata_pos = cdata_alloc - s.avail_out;
 	if (err != Z_OK) {
-	    fprintf(stderr, "zlib deflate error: %s\n", s.msg);
+	    hts_log_error("Call to zlib deflate failed: %s", s.msg);
 	    break;
 	}
     }
     if (deflate(&s, Z_FINISH) != Z_STREAM_END) {
-	fprintf(stderr, "zlib deflate error: %s\n", s.msg);
+	hts_log_error("Call to zlib deflate failed: %s", s.msg);
     }
     *cdata_size = s.total_out;
 
     if (deflateEnd(&s) != Z_OK) {
-	fprintf(stderr, "zlib deflate error: %s\n", s.msg);
+	hts_log_error("Call to zlib deflate failed: %s", s.msg);
     }
     return (char *)cdata;
 }
@@ -851,7 +688,7 @@ static char *lzma_mem_inflate(char *cdata, size_t csize, size_t *size) {
     int r;
 
     /* Initiate the decoder */
-    if (LZMA_OK != lzma_stream_decoder(&strm, 50000000, 0))
+    if (LZMA_OK != lzma_stream_decoder(&strm, lzma_easy_decoder_memusage(9), 0))
 	return NULL;
 
     /* Decode loop */
@@ -868,8 +705,7 @@ static char *lzma_mem_inflate(char *cdata, size_t csize, size_t *size) {
 
 	r = lzma_code(&strm, LZMA_RUN);
 	if (LZMA_OK != r && LZMA_STREAM_END != r) {
-	    fprintf(stderr, "r=%d\n", r);
-	    fprintf(stderr, "mem=%"PRId64"d\n", (int64_t)lzma_memusage(&strm));
+	    hts_log_error("LZMA decode failure (error %d)", r);
 	    return NULL;
 	}
 
@@ -882,7 +718,7 @@ static char *lzma_mem_inflate(char *cdata, size_t csize, size_t *size) {
     /* finish up any unflushed data; necessary? */
     r = lzma_code(&strm, LZMA_FINISH);
     if (r != LZMA_OK && r != LZMA_STREAM_END) {
-	fprintf(stderr, "r=%d\n", r);
+	hts_log_error("Call to lzma_code failed with error %d", r);
 	return NULL;
     }
 
@@ -950,10 +786,11 @@ cram_block *cram_read_block(cram_fd *fd) {
     if (-1 == itf8_decode_crc(fd, &b->comp_size, &crc))   { free(b); return NULL; }
     if (-1 == itf8_decode_crc(fd, &b->uncomp_size, &crc)) { free(b); return NULL; }
 
-    //    fprintf(stderr, "  method %d, ctype %d, cid %d, csize %d, ucsize %d\n",
+    //fprintf(stderr, "  method %d, ctype %d, cid %d, csize %d, ucsize %d\n",
     //	    b->method, b->content_type, b->content_id, b->comp_size, b->uncomp_size);
 
     if (b->method == RAW) {
+        if (b->uncomp_size < 0) { free(b); return NULL; }
 	b->alloc = b->uncomp_size;
 	if (!(b->data = malloc(b->uncomp_size))){ free(b); return NULL; }
 	if (b->uncomp_size != hread(fd->fp, b->data, b->uncomp_size)) {
@@ -962,6 +799,7 @@ cram_block *cram_read_block(cram_fd *fd) {
 	    return NULL;
 	}
     } else {
+        if (b->comp_size < 0) { free(b); return NULL; }
 	b->alloc = b->comp_size;
 	if (!(b->data = malloc(b->comp_size)))  { free(b); return NULL; }
 	if (b->comp_size != hread(fd->fp, b->data, b->comp_size)) {
@@ -979,7 +817,7 @@ cram_block *cram_read_block(cram_fd *fd) {
 
 	crc = crc32(crc, b->data ? b->data : (uc *)"", b->alloc);
 	if (crc != b->crc32) {
-	    fprintf(stderr, "Block CRC32 failure\n");
+	    hts_log_error("Block CRC32 failure");
 	    free(b->data);
 	    free(b);
 	    return NULL;
@@ -992,6 +830,27 @@ cram_block *cram_read_block(cram_fd *fd) {
     b->bit = 7; // MSB
 
     return b;
+}
+
+
+/*
+ * Computes the size of a cram block, including the block
+ * header itself.
+ */
+uint32_t cram_block_size(cram_block *b) {
+    unsigned char dat[100], *cp = dat;;
+    uint32_t sz;
+
+    *cp++ = b->method;
+    *cp++ = b->content_type;
+    cp += itf8_put((char*)cp, b->content_id);
+    cp += itf8_put((char*)cp, b->comp_size);
+    cp += itf8_put((char*)cp, b->uncomp_size);
+
+    sz = cp-dat + 4;
+    sz += b->method == RAW ? b->uncomp_size : b->comp_size;
+
+    return sz;
 }
 
 /*
@@ -1008,12 +867,17 @@ int cram_write_block(cram_fd *fd, cram_block *b) {
     if (itf8_encode(fd, b->comp_size)   ==  -1) return -1;
     if (itf8_encode(fd, b->uncomp_size) ==  -1) return -1;
 
-    if (b->method == RAW) {
-	if (b->uncomp_size != hwrite(fd->fp, b->data, b->uncomp_size))
-	    return -1;
+    if (b->data) {
+        if (b->method == RAW) {
+            if (b->uncomp_size != hwrite(fd->fp, b->data, b->uncomp_size))
+                return -1;
+        } else {
+            if (b->comp_size != hwrite(fd->fp, b->data, b->comp_size))
+                return -1;
+        }
     } else {
-	if (b->comp_size != hwrite(fd->fp, b->data, b->comp_size))
-	    return -1;
+        // Absent blocks should be size 0
+        assert(b->method == RAW && b->uncomp_size == 0);
     }
 
     if (CRAM_MAJOR_VERS(fd->version) >= 3) {
@@ -1022,9 +886,9 @@ int cram_write_block(cram_fd *fd, cram_block *b) {
 
 	*cp++ = b->method;
 	*cp++ = b->content_type;
-	cp += itf8_put(cp, b->content_id);
-	cp += itf8_put(cp, b->comp_size);
-	cp += itf8_put(cp, b->uncomp_size);
+	cp += itf8_put((char*)cp, b->content_id);
+	cp += itf8_put((char*)cp, b->comp_size);
+	cp += itf8_put((char*)cp, b->uncomp_size);
 	crc = crc32(0L, dat, cp-dat);
 
 	if (b->method == RAW) {
@@ -1102,8 +966,7 @@ int cram_uncompress_block(cram_block *b) {
     }
 #else
     case BZIP2:
-	fprintf(stderr, "Bzip2 compression is not compiled into this "
-		"version.\nPlease rebuild and try again.\n");
+	hts_log_error("Bzip2 compression is not compiled into this version. Please rebuild and try again");
 	return -1;
 #endif
 
@@ -1121,8 +984,7 @@ int cram_uncompress_block(cram_block *b) {
 	break;
 #else
     case LZMA:
-	fprintf(stderr, "Lzma compression is not compiled into this "
-		"version.\nPlease rebuild and try again.\n");
+	hts_log_error("Lzma compression is not compiled into this version. Please rebuild and try again");
 	return -1;
 	break;
 #endif
@@ -1131,7 +993,7 @@ int cram_uncompress_block(cram_block *b) {
 	unsigned int usize = b->uncomp_size, usize2;
 	uncomp = (char *)rans_uncompress(b->data, b->comp_size, &usize2);
 	if (!uncomp || usize != usize2)
- 	    return -1;
+	    return -1;
 	free(b->data);
 	b->data = (unsigned char *)uncomp;
 	b->alloc = usize2;
@@ -1218,6 +1080,8 @@ static char *cram_compress_by_method(char *in, size_t in_size,
  * The logic here is that sometimes Z_RLE does a better job than Z_FILTERED
  * or Z_DEFAULT_STRATEGY on quality data. If so, we'd rather use it as it is
  * significantly faster.
+ *
+ * Method and level -1 implies defaults, as specified in cram_fd.
  */
 int cram_compress_block(cram_fd *fd, cram_block *b, cram_metrics *metrics,
 			int method, int level) {
@@ -1225,6 +1089,26 @@ int cram_compress_block(cram_fd *fd, cram_block *b, cram_metrics *metrics,
     char *comp = NULL;
     size_t comp_size = 0;
     int strat;
+
+    if (b->method != RAW) {
+        // Maybe already compressed if s->block[0] was compressed and
+        // we have e.g. s->block[DS_BA] set to s->block[0] due to only
+        // one base type present and hence using E_HUFFMAN on block 0.
+        // A second explicit attempt to compress the same block then
+        // occurs.
+        return 0;
+    }
+
+    if (method == -1) {
+	method = 1<<GZIP;
+	if (fd->use_bz2)
+	    method |= 1<<BZIP2;
+	if (fd->use_lzma)
+	    method |= 1<<LZMA;
+    }
+
+    if (level == -1)
+	level = fd->level;
 
     //fprintf(stderr, "IN: block %d, sz %d\n", b->content_id, b->uncomp_size);
 
@@ -1253,7 +1137,7 @@ int cram_compress_block(cram_fd *fd, cram_block *b, cram_metrics *metrics,
 	    else
 		metrics->revised_method = method;
 
-	    if (metrics->next_trial == 0) {
+	    if (metrics->next_trial <= 0) {
 		metrics->next_trial = TRIAL_SPAN;
 		metrics->trial = NTRIALS;
 		metrics->sz_gz_rle /= 2;
@@ -1518,7 +1402,7 @@ int cram_compress_block(cram_fd *fd, cram_block *b, cram_metrics *metrics,
 	comp = cram_compress_by_method((char *)b->data, b->uncomp_size,
 				       &comp_size, GZIP, level, Z_FILTERED);
 	if (!comp) {
-	    fprintf(stderr, "Compression failed!\n");
+	    hts_log_error("Compression failed");
 	    return -1;
 	}
 	free(b->data);
@@ -1527,10 +1411,9 @@ int cram_compress_block(cram_fd *fd, cram_block *b, cram_metrics *metrics,
 	b->method = GZIP;
     }
 
-    if (fd->verbose)
-	fprintf(stderr, "Compressed block ID %d from %d to %d by method %s\n",
-		b->content_id, b->uncomp_size, b->comp_size,
-		cram_block_method2str(b->method));
+    hts_log_info("Compressed block ID %d from %d to %d by method %s",
+	    b->content_id, b->uncomp_size, b->comp_size,
+	    cram_block_method2str(b->method));
 
     if (b->method == RANS1)
 	b->method = RANS0; // Spec just has RANS (not 0/1) with auto-sensing
@@ -1560,7 +1443,7 @@ char *cram_block_method2str(enum cram_block_method m) {
     case RANS0:    return "RANS0";
     case RANS1:    return "RANS1";
     case GZIP_RLE: return "GZIP_RLE";
-    case ERROR:    break;
+    case BM_ERROR: break;
     }
     return "?";
 }
@@ -1576,29 +1459,6 @@ char *cram_content_type2str(enum cram_content_type t) {
     case CT_ERROR:            break;
     }
     return "?";
-}
-
-/*
- * Extra error checking on fclose to really ensure data is written.
- * Care needs to be taken to handle pipes vs real files.
- *
- * Returns 0 on success
- *        -1 on failure.
- */
-int paranoid_fclose(FILE *fp) {
-    if (-1 == fflush(fp) && errno != EBADF) {
-	fclose(fp);
-	return -1;
-    }
-
-    errno = 0;
-    if (-1 == fsync(fileno(fp))) {
-	if (errno != EINVAL) { // eg pipe
-	    fclose(fp);
-	    return -1;
-	}
-    }
-    return fclose(fp);
 }
 
 /* ----------------------------------------------------------------------
@@ -1713,14 +1573,17 @@ static refs_t *refs_create(void) {
  * Returns a BGZF handle on success;
  *         NULL on failure.
  */
-static BGZF *bgzf_open_ref(char *fn, char *mode) {
+static BGZF *bgzf_open_ref(char *fn, char *mode, int is_md5) {
     BGZF *fp;
-    char fai_file[PATH_MAX];
 
-    snprintf(fai_file, PATH_MAX, "%s.fai", fn);
-    if (access(fai_file, R_OK) != 0)
-	if (fai_build(fn) != 0)
-	    return NULL;
+    if (!is_md5) {
+	char fai_file[PATH_MAX];
+
+	snprintf(fai_file, PATH_MAX, "%s.fai", fn);
+	if (access(fai_file, R_OK) != 0)
+	    if (fai_build(fn) != 0)
+		return NULL;
+    }
 
     if (!(fp = bgzf_open(fn, mode))) {
 	perror(fn);
@@ -1728,7 +1591,7 @@ static BGZF *bgzf_open_ref(char *fn, char *mode) {
     }
 
     if (fp->is_compressed == 1 && bgzf_index_load(fp, fn, ".gzi") < 0) {
-	fprintf(stderr, "Unable to load .gzi index '%s.gzi'\n", fn);
+	hts_log_error("Unable to load .gzi index '%s.gzi'", fn);
 	bgzf_close(fp);
 	return NULL;
     }
@@ -1778,7 +1641,7 @@ static refs_t *refs_load_fai(refs_t *r_orig, char *fn, int is_err) {
     if (fn_l > 4 && strcmp(&fn[fn_l-4], ".fai") == 0)
 	r->fn[fn_l-4] = 0;
 
-    if (!(r->fp = bgzf_open_ref(r->fn, "r")))
+    if (!(r->fp = bgzf_open_ref(r->fn, "r", 0)))
 	goto err;
 
     /* Parse .fai file and load meta-data */
@@ -1804,28 +1667,28 @@ static refs_t *refs_load_fai(refs_t *r_orig, char *fn, int is_err) {
 	    return NULL;
 
 	// id
-	for (cp = line; *cp && !isspace(*cp); cp++)
+	for (cp = line; *cp && !isspace_c(*cp); cp++)
 	    ;
 	*cp++ = 0;
 	e->name = string_dup(r->pool, line);
 	
 	// length
-	while (*cp && isspace(*cp))
+	while (*cp && isspace_c(*cp))
 	    cp++;
 	e->length = strtoll(cp, &cp, 10);
 
 	// offset
-	while (*cp && isspace(*cp))
+	while (*cp && isspace_c(*cp))
 	    cp++;
 	e->offset = strtoll(cp, &cp, 10);
 
 	// bases per line
-	while (*cp && isspace(*cp))
+	while (*cp && isspace_c(*cp))
 	    cp++;
 	e->bases_per_line = strtol(cp, &cp, 10);
 
 	// line length
-	while (*cp && isspace(*cp))
+	while (*cp && isspace_c(*cp))
 	    cp++;
 	e->line_length = strtol(cp, &cp, 10);
 
@@ -1835,6 +1698,7 @@ static refs_t *refs_load_fai(refs_t *r_orig, char *fn, int is_err) {
 	e->count = 0;
 	e->seq = NULL;
 	e->mf = NULL;
+	e->is_md5 = 0;
 
 	k = kh_put(refs, r->h_meta, e->name, &n);
 	if (-1 == n)  {
@@ -1870,6 +1734,7 @@ static refs_t *refs_load_fai(refs_t *r_orig, char *fn, int is_err) {
 	r->nref = ++id;
     }
 
+    fclose(fp);
     return r;
 
  err:
@@ -1912,8 +1777,7 @@ static void sanitise_SQ_lines(cram_fd *fd) {
 
 	    // Should we also check MD5sums here to ensure the correct
 	    // reference was given?
-	    fprintf(stderr, "WARNING: Header @SQ length mismatch for "
-		    "ref %s, %d vs %d\n",
+	    hts_log_warning("Header @SQ length mismatch for ref %s, %d vs %d",
 		    r->name, fd->header->ref[i].len, (int)r->length);
 
 	    // Fixing the parsed @SQ header will make MD:Z: strings work
@@ -1948,8 +1812,7 @@ int refs2id(refs_t *r, SAM_hdr *h) {
 	if (k != kh_end(r->h_meta)) {
 	    r->ref_id[i] = kh_val(r->h_meta, k);
 	} else {
-	    fprintf(stderr, "Unable to find ref name '%s'\n",
-		    h->ref[i].name);
+	    hts_log_warning("Unable to find ref name '%s'", h->ref[i].name);
 	}
     }
 
@@ -2128,6 +1991,19 @@ static const char *get_cache_basedir(const char **extra) {
 }
 
 /*
+ * Return an integer representation of pthread_self().
+ */
+static unsigned get_int_threadid() {
+    pthread_t pt = pthread_self();
+    unsigned char *s = (unsigned char *) &pt;
+    size_t i;
+    unsigned h = 0;
+    for (i = 0; i < sizeof(pthread_t); i++)
+	h = (h << 5) - h + s[i];
+    return h;
+}
+
+/*
  * Queries the M5 string from the header and attempts to populate the
  * reference from this using the REF_PATH environment.
  *
@@ -2138,12 +2014,15 @@ static int cram_populate_ref(cram_fd *fd, int id, ref_entry *r) {
     char *ref_path = getenv("REF_PATH");
     SAM_hdr_type *ty;
     SAM_hdr_tag *tag;
-    char path[PATH_MAX], path_tmp[PATH_MAX], cache[PATH_MAX];
+    char path[PATH_MAX], path_tmp[PATH_MAX];
+    char cache[PATH_MAX], cache_root[PATH_MAX];
     char *local_cache = getenv("REF_CACHE");
     mFILE *mf;
+    int local_path = 0;
 
-    if (fd->verbose)
-	fprintf(stderr, "cram_populate_ref on fd %p, id %d\n", fd, id);
+    hts_log_info("Running cram_populate_ref on fd %p, id %d", (void *)fd, id);
+
+    cache_root[0] = '\0';
 
     if (!ref_path || *ref_path == '\0') {
 	/*
@@ -2154,10 +2033,10 @@ static int cram_populate_ref(cram_fd *fd, int id, ref_entry *r) {
 	if (!local_cache || *local_cache == '\0') {
 	    const char *extra;
 	    const char *base = get_cache_basedir(&extra);
+	    snprintf(cache_root, PATH_MAX, "%s%s/hts-ref", base, extra);
 	    snprintf(cache,PATH_MAX, "%s%s/hts-ref/%%2s/%%2s/%%s", base, extra);
 	    local_cache = cache;
-	    if (fd->verbose)
-		fprintf(stderr, "Populating local cache: %s\n", local_cache);
+	    hts_log_info("Populating local cache: %s", local_cache);
 	}
     }
 
@@ -2170,15 +2049,29 @@ static int cram_populate_ref(cram_fd *fd, int id, ref_entry *r) {
     if (!(tag = sam_hdr_find_key(fd->header, ty, "M5", NULL)))
 	goto no_M5;
 
-    if (fd->verbose)
-	fprintf(stderr, "Querying ref %s\n", tag->str+3);
+    hts_log_info("Querying ref %s", tag->str+3);
 
     /* Use cache if available */
     if (local_cache && *local_cache) {
+	expand_cache_path(path, local_cache, tag->str+3);
+	local_path = 1;
+    }
+
+#ifndef HAVE_MMAP
+    char *path2;
+    /* Search local files in REF_PATH; we can open them and return as above */
+    if (!local_path && (path2 = find_path(tag->str+3, ref_path))) {
+	strncpy(path, path2, PATH_MAX);
+	free(path2);
+	if (is_file(path)) // incase it's too long
+	    local_path = 1;
+    }
+#endif
+
+    /* Found via REF_CACHE or local REF_PATH file */
+    if (local_path) {
 	struct stat sb;
 	BGZF *fp;
-
-	expand_cache_path(path, local_cache, tag->str+3);
 
 	if (0 == stat(path, &sb) && (fp = bgzf_open(path, "r"))) {
 	    r->length = sb.st_size;
@@ -2191,6 +2084,7 @@ static int cram_populate_ref(cram_fd *fd, int id, ref_entry *r) {
 		    return -1;
 	    fd->refs->fp = fp;
 	    fd->refs->fn = r->fn;
+	    r->is_md5 = 1;
 
 	    // Fall back to cram_get_ref() where it'll do the actual
 	    // reading of the file.
@@ -2198,7 +2092,8 @@ static int cram_populate_ref(cram_fd *fd, int id, ref_entry *r) {
 	}
     }
 
-    /* Otherwise search */
+
+    /* Otherwise search full REF_PATH; slower as loads entire file */
     if ((mf = open_path_mfile(tag->str+3, ref_path, NULL))) {
 	size_t sz;
 	r->seq = mfsteal(mf, &sz);
@@ -2210,6 +2105,7 @@ static int cram_populate_ref(cram_fd *fd, int id, ref_entry *r) {
 	    r->mf = mf;
 	}
 	r->length = sz;
+	r->is_md5 = 1;
     } else {
 	refs_t *refs;
 	char *fn;
@@ -2253,19 +2149,27 @@ static int cram_populate_ref(cram_fd *fd, int id, ref_entry *r) {
 
     /* Populate the local disk cache if required */
     if (local_cache && *local_cache) {
-	FILE *fp;
-	int i;
+        int pid = (int) getpid();
+        unsigned thrid = get_int_threadid();
+        hFILE *fp;
+
+        if (*cache_root && !is_directory(cache_root)) {
+            hts_log_warning("Creating reference cache directory %s\n"
+                "This may become large; see the samtools(1) manual page REF_CACHE discussion",
+                cache_root);
+        }
 
 	expand_cache_path(path, local_cache, tag->str+3);
-	if (fd->verbose)
-	    fprintf(stderr, "Path='%s'\n", path);
+	hts_log_info("Writing cache file '%s'", path);
 	mkdir_prefix(path, 01777);
 
-	i = 0;
 	do {
-	    sprintf(path_tmp, "%s.tmp_%d", path, /*getpid(),*/ i);
-	    i++;
-	    fp = fopen(path_tmp, "wx");
+	    // Attempt to further uniquify the temporary filename
+	    unsigned t = ((unsigned) time(NULL)) ^ ((unsigned) clock());
+	    thrid++; // Ensure filename changes even if time/clock haven't
+
+	    sprintf(path_tmp, "%s.tmp_%d_%u_%u", path, pid, thrid, t);
+	    fp = hopen(path_tmp, "wx");
 	} while (fp == NULL && errno == EEXIST);
 	if (!fp) {
 	    perror(path_tmp);
@@ -2274,10 +2178,32 @@ static int cram_populate_ref(cram_fd *fd, int id, ref_entry *r) {
 	    return 0;
 	}
 
-	if (r->length != fwrite(r->seq, 1, r->length, fp)) {
+	// Check md5sum
+	hts_md5_context *md5;
+	char unsigned md5_buf1[16];
+	char md5_buf2[33];
+
+	if (!(md5 = hts_md5_init())) {
+	    hclose_abruptly(fp);
+	    unlink(path_tmp);
+	    return -1;
+	}
+	hts_md5_update(md5, r->seq, r->length);
+	hts_md5_final(md5_buf1, md5);
+	hts_md5_destroy(md5);
+	hts_md5_hex(md5_buf2, md5_buf1);
+
+	if (strncmp(tag->str+3, md5_buf2, 32) != 0) {
+	    hts_log_error("Mismatching md5sum for downloaded reference");
+	    hclose_abruptly(fp);
+	    unlink(path_tmp);
+	    return -1;
+	}
+
+	if (hwrite(fp, r->seq, r->length) != r->length) {
 	    perror(path);
 	}
-	if (-1 == paranoid_fclose(fp)) {
+	if (hclose(fp) < 0) {
 	    unlink(path_tmp);
 	} else {
 	    if (0 == chmod(path_tmp, 0444))
@@ -2293,7 +2219,7 @@ static int cram_populate_ref(cram_fd *fd, int id, ref_entry *r) {
 static void cram_ref_incr_locked(refs_t *r, int id) {
     RP("%d INC REF %d, %d %p\n", gettid(), id, (int)(id>=0?r->ref_id[id]->count+1:-999), id>=0?r->ref_id[id]->seq:(char *)1);
 
-    if (id < 0 || !r->ref_id[id]->seq)
+    if (id < 0 || !r->ref_id[id] || !r->ref_id[id]->seq)
 	return;
 
     if (r->last_id == id)
@@ -2311,7 +2237,7 @@ void cram_ref_incr(refs_t *r, int id) {
 static void cram_ref_decr_locked(refs_t *r, int id) {
     RP("%d DEC REF %d, %d %p\n", gettid(), id, (int)(id>=0?r->ref_id[id]->count-1:-999), id>=0?r->ref_id[id]->seq:(char *)1);
 
-    if (id < 0 || !r->ref_id[id]->seq) {
+    if (id < 0 || !r->ref_id[id] || !r->ref_id[id]->seq) {
 	assert(r->ref_id[id]->count >= 0);
 	return;
     }
@@ -2390,19 +2316,19 @@ static char *load_ref_portion(BGZF *fp, ref_entry *e, int start, int end) {
 
 	for (i = j = 0; i < len; i++) {
 	    if (cp[i] >= '!' && cp[i] <= '~')
-		cp[j++] = toupper(cp[i]);
+		cp[j++] = toupper_c(cp[i]);
 	}
 	cp_to = cp+j;
 
 	if (cp_to - seq != end-start+1) {
-	    fprintf(stderr, "Malformed reference file?\n");
+	    hts_log_error("Malformed reference file");
 	    free(seq);
 	    return NULL;
 	}
     } else {
 	int i;
 	for (i = 0; i < len; i++) {
-	    seq[i] = toupper(seq[i]);
+	    seq[i] = toupper_c(seq[i]);
 	}
     }
 
@@ -2416,7 +2342,7 @@ static char *load_ref_portion(BGZF *fp, ref_entry *e, int start, int end) {
  * Returns ref_entry on success;
  *         NULL on failure
  */
-ref_entry *cram_ref_load(refs_t *r, int id) {
+ref_entry *cram_ref_load(refs_t *r, int id, int is_md5) {
     ref_entry *e = r->ref_id[id];
     int start = 1, end = e->length;
     char *seq;
@@ -2449,7 +2375,7 @@ ref_entry *cram_ref_load(refs_t *r, int id) {
 	    if (bgzf_close(r->fp) != 0)
 		return NULL;
 	r->fn = e->fn;
-	if (!(r->fp = bgzf_open_ref(r->fn, "r")))
+	if (!(r->fp = bgzf_open_ref(r->fn, "r", is_md5)))
 	    return NULL;
     }
 
@@ -2528,19 +2454,19 @@ char *cram_get_ref(cram_fd *fd, int id, int start, int end) {
 
     /* Sanity checking: does this ID exist? */
     if (id >= fd->refs->nref) {
-	fprintf(stderr, "No reference found for id %d\n", id);
+	hts_log_error("No reference found for id %d", id);
 	pthread_mutex_unlock(&fd->ref_lock);
 	return NULL;
     }
 
     if (!fd->refs || !fd->refs->ref_id[id]) {
-	fprintf(stderr, "No reference found for id %d\n", id);
+	hts_log_error("No reference found for id %d", id);
 	pthread_mutex_unlock(&fd->ref_lock);
 	return NULL;
     }
 
     if (!(r = fd->refs->ref_id[id])) {
-	fprintf(stderr, "No reference found for id %d\n", id);
+	hts_log_error("No reference found for id %d", id);
 	pthread_mutex_unlock(&fd->ref_lock);
 	return NULL;
     }
@@ -2560,7 +2486,7 @@ char *cram_get_ref(cram_fd *fd, int id, int start, int end) {
     pthread_mutex_lock(&fd->refs->lock);
     if (r->length == 0) {
 	if (cram_populate_ref(fd, id, r) == -1) {
-	    fprintf(stderr, "Failed to populate reference for id %d\n", id);
+	    hts_log_error("Failed to populate reference for id %d", id);
 	    pthread_mutex_unlock(&fd->refs->lock);
 	    pthread_mutex_unlock(&fd->ref_lock);
 	    return NULL;
@@ -2580,7 +2506,8 @@ char *cram_get_ref(cram_fd *fd, int id, int start, int end) {
 	end = r->length;
     if (end >= r->length)
 	end  = r->length; 
-    assert(start >= 1);
+    if (start < 1)
+	return NULL;
 
     if (end - start >= 0.5*r->length || fd->shared_ref) {
 	start = 1;
@@ -2603,7 +2530,7 @@ char *cram_get_ref(cram_fd *fd, int id, int start, int end) {
 		cram_ref_incr_locked(fd->refs, id);
 	    } else {
 		ref_entry *e;
-		if (!(e = cram_ref_load(fd->refs, id))) {
+		if (!(e = cram_ref_load(fd->refs, id, r->is_md5))) {
 		    pthread_mutex_unlock(&fd->refs->lock);
 		    pthread_mutex_unlock(&fd->ref_lock);
 		    return NULL;
@@ -2661,7 +2588,7 @@ char *cram_get_ref(cram_fd *fd, int id, int start, int end) {
 	    if (bgzf_close(fd->refs->fp) != 0)
 		return NULL;
 	fd->refs->fn = r->fn;
-	if (!(fd->refs->fp = bgzf_open_ref(fd->refs->fn, "r"))) {
+	if (!(fd->refs->fp = bgzf_open_ref(fd->refs->fn, "r", r->is_md5))) {
 	    pthread_mutex_unlock(&fd->refs->lock);
 	    pthread_mutex_unlock(&fd->ref_lock);
 	    return NULL;
@@ -2749,6 +2676,7 @@ cram_container *cram_new_container(int nrec, int nslice) {
     c->max_rec = nrec;
     c->record_counter = 0;
     c->num_bases = 0;
+    c->s_num_bases = 0;
 
     c->max_slice = nslice;
     c->curr_slice = 0;
@@ -2772,7 +2700,7 @@ cram_container *cram_new_container(int nrec, int nslice) {
     
     //c->aux_B_stats = cram_stats_create();
 
-    if (!(c->tags_used = kh_init(s_i2i)))
+    if (!(c->tags_used = kh_init(m_tagmap)))
 	goto err;
     c->refs_used = 0;
 
@@ -2818,7 +2746,22 @@ void cram_free_container(cram_container *c) {
 
     //if (c->aux_B_stats) cram_stats_free(c->aux_B_stats);
     
-    if (c->tags_used) kh_destroy(s_i2i, c->tags_used);
+    if (c->tags_used) {
+	khint_t k;
+
+	for (k = kh_begin(c->tags_used); k != kh_end(c->tags_used); k++) {
+	    if (!kh_exist(c->tags_used, k))
+		continue;
+
+	    cram_tag_map *tm = (cram_tag_map *)kh_val(c->tags_used, k);
+	    cram_codec *c = tm->codec;
+
+	    if (c) c->free(c);
+	    free(tm);
+	}
+
+	kh_destroy(m_tagmap, c->tags_used);
+    }
 
     free(c);
 }
@@ -2892,6 +2835,9 @@ cram_container *cram_read_container(cram_fd *fd) {
     if ((s = itf8_decode_crc(fd, &c2.num_blocks, &crc))   == -1) return NULL; else rd+=s;
     if ((s = itf8_decode_crc(fd, &c2.num_landmarks, &crc))== -1) return NULL; else rd+=s;
 
+    if (c2.num_landmarks < 0 || c2.num_landmarks >= SIZE_MAX / sizeof(int32_t))
+        return NULL;
+
     if (!(c = calloc(1, sizeof(*c))))
 	return NULL;
 
@@ -2919,7 +2865,7 @@ cram_container *cram_read_container(cram_fd *fd) {
 	    rd+=4;
 
 	if (crc != c->crc32) {
-	    fprintf(stderr, "Container header CRC32 failure\n");
+	    hts_log_error("Container header CRC32 failure");
 	    cram_free_container(c);
 	    return NULL;
 	}
@@ -2946,51 +2892,62 @@ cram_container *cram_read_container(cram_fd *fd) {
     return c;
 }
 
+
+/* MAXIMUM storage size needed for the container. */
+int cram_container_size(cram_container *c) {
+    return 55 + 5*c->num_landmarks;
+}
+
+
 /*
- * Writes a container structure.
+ * Stores the container structure in dat and returns *size as the
+ * number of bytes written to dat[].  The input size of dat is also
+ * held in *size and should be initialised to cram_container_size(c).
  *
- * Returns 0 on success
+ * Returns 0 on success;
  *        -1 on failure
  */
-int cram_write_container(cram_fd *fd, cram_container *c) {
-    char buf_a[1024], *buf = buf_a, *cp;
+int cram_store_container(cram_fd *fd, cram_container *c, char *dat, int *size)
+{
+    unsigned char *cp = (unsigned char *)dat;
     int i;
 
-    if (55 + c->num_landmarks * 5 >= 1024)
-	buf = malloc(55 + c->num_landmarks * 5);
-    cp = buf;
+    // Check the input buffer is large enough according to our stated
+    // requirements. (NOTE: it may actually take less.)
+    if (cram_container_size(c) > *size)
+        return -1;
 
     if (CRAM_MAJOR_VERS(fd->version) == 1) {
-	cp += itf8_put(cp, c->length);
+	cp += itf8_put((char*)cp, c->length);
     } else {
 	*(int32_t *)cp = le_int4(c->length);
 	cp += 4;
     }
     if (c->multi_seq) {
-	cp += itf8_put(cp, -2);
-	cp += itf8_put(cp, 0);
-	cp += itf8_put(cp, 0);
+	cp += itf8_put((char*)cp, -2);
+	cp += itf8_put((char*)cp, 0);
+	cp += itf8_put((char*)cp, 0);
     } else {
-	cp += itf8_put(cp, c->ref_seq_id);
-	cp += itf8_put(cp, c->ref_seq_start);
-	cp += itf8_put(cp, c->ref_seq_span);
+	cp += itf8_put((char*)cp, c->ref_seq_id);
+	cp += itf8_put((char*)cp, c->ref_seq_start);
+	cp += itf8_put((char*)cp, c->ref_seq_span);
     }
-    cp += itf8_put(cp, c->num_records);
+    cp += itf8_put((char*)cp, c->num_records);
     if (CRAM_MAJOR_VERS(fd->version) == 2) {
-	cp += itf8_put(cp, c->record_counter);
-	cp += ltf8_put(cp, c->num_bases);
+	cp += itf8_put((char*)cp, c->record_counter);
+	cp += ltf8_put((char*)cp, c->num_bases);
     } else if (CRAM_MAJOR_VERS(fd->version) >= 3) {
-	cp += ltf8_put(cp, c->record_counter);
-	cp += ltf8_put(cp, c->num_bases);
+	cp += ltf8_put((char*)cp, c->record_counter);
+	cp += ltf8_put((char*)cp, c->num_bases);
     }
 
-    cp += itf8_put(cp, c->num_blocks);
-    cp += itf8_put(cp, c->num_landmarks);
+    cp += itf8_put((char*)cp, c->num_blocks);
+    cp += itf8_put((char*)cp, c->num_landmarks);
     for (i = 0; i < c->num_landmarks; i++)
-	cp += itf8_put(cp, c->landmark[i]);
+	cp += itf8_put((char*)cp, c->landmark[i]);
 
     if (CRAM_MAJOR_VERS(fd->version) >= 3) {
-	c->crc32 = crc32(0L, (uc *)buf, cp-buf);
+	c->crc32 = crc32(0L, (uc *)dat, (char*)cp-dat);
 	cp[0] =  c->crc32        & 0xff;
 	cp[1] = (c->crc32 >>  8) & 0xff;
 	cp[2] = (c->crc32 >> 16) & 0xff;
@@ -2998,7 +2955,66 @@ int cram_write_container(cram_fd *fd, cram_container *c) {
 	cp += 4;
     }
 
-    if (cp-buf != hwrite(fd->fp, buf, cp-buf)) {
+    *size = (char *)cp-dat; // actual used size
+
+    return 0;
+}
+
+
+/*
+ * Writes a container structure.
+ *
+ * Returns 0 on success
+ *        -1 on failure
+ */
+int cram_write_container(cram_fd *fd, cram_container *c) {
+    char buf_a[1024], *buf = buf_a;
+    unsigned char *cp;
+    int i;
+
+    if (55 + c->num_landmarks * 5 >= 1024)
+	buf = malloc(55 + c->num_landmarks * 5);
+    cp = (unsigned char *)buf;
+
+    if (CRAM_MAJOR_VERS(fd->version) == 1) {
+	cp += itf8_put((char*)cp, c->length);
+    } else {
+	*(int32_t *)cp = le_int4(c->length);
+	cp += 4;
+    }
+    if (c->multi_seq) {
+	cp += itf8_put((char*)cp, -2);
+	cp += itf8_put((char*)cp, 0);
+	cp += itf8_put((char*)cp, 0);
+    } else {
+	cp += itf8_put((char*)cp, c->ref_seq_id);
+	cp += itf8_put((char*)cp, c->ref_seq_start);
+	cp += itf8_put((char*)cp, c->ref_seq_span);
+    }
+    cp += itf8_put((char*)cp, c->num_records);
+    if (CRAM_MAJOR_VERS(fd->version) == 2) {
+	cp += itf8_put((char*)cp, c->record_counter);
+	cp += ltf8_put((char*)cp, c->num_bases);
+    } else if (CRAM_MAJOR_VERS(fd->version) >= 3) {
+	cp += ltf8_put((char*)cp, c->record_counter);
+	cp += ltf8_put((char*)cp, c->num_bases);
+    }
+
+    cp += itf8_put((char*)cp, c->num_blocks);
+    cp += itf8_put((char*)cp, c->num_landmarks);
+    for (i = 0; i < c->num_landmarks; i++)
+	cp += itf8_put((char*)cp, c->landmark[i]);
+
+    if (CRAM_MAJOR_VERS(fd->version) >= 3) {
+	c->crc32 = crc32(0L, (uc *)buf, (char*)cp-buf);
+	cp[0] =  c->crc32        & 0xff;
+	cp[1] = (c->crc32 >>  8) & 0xff;
+	cp[2] = (c->crc32 >> 16) & 0xff;
+	cp[3] = (c->crc32 >> 24) & 0xff;
+	cp += 4;
+    }
+
+    if ((char*)cp-buf != hwrite(fd->fp, buf, (char*)cp-buf)) {
 	if (buf != buf_a)
 	    free(buf);
 	return -1;
@@ -3013,6 +3029,9 @@ int cram_write_container(cram_fd *fd, cram_container *c) {
 // common component shared by cram_flush_container{,_mt}
 static int cram_flush_container2(cram_fd *fd, cram_container *c) {
     int i, j;
+
+    if (c->curr_slice > 0 && !c->slices)
+	return -1;
 
     //fprintf(stderr, "Writing container %d, sum %u\n", c->record_counter, sum);
 
@@ -3066,7 +3085,7 @@ void *cram_flush_thread(void *arg) {
 
     /* Encode the container blocks and generate compression header */
     if (0 != cram_encode_container(j->fd, j->c)) {
-	fprintf(stderr, "cram_encode_container failed\n");
+	hts_log_error("Call to cram_encode_container failed");
 	return NULL;
     }
 
@@ -3075,27 +3094,30 @@ void *cram_flush_thread(void *arg) {
 
 static int cram_flush_result(cram_fd *fd) {
     int i, ret = 0;
-    t_pool_result *r;
+    hts_tpool_result *r;
 
-    while ((r = t_pool_next_result(fd->rqueue))) {
-	cram_job *j = (cram_job *)r->data;
+    while ((r = hts_tpool_next_result(fd->rqueue))) {
+	cram_job *j = (cram_job *)hts_tpool_result_data(r);
 	cram_container *c;
 
 	if (!j) {
-	    t_pool_delete_result(r, 0);
+	    hts_tpool_delete_result(r, 0);
 	    return -1;
 	}
 
 	fd = j->fd;
 	c = j->c;
 
-	if (0 != cram_flush_container2(fd, c))
-	    return -1;
+	if (fd->mode == 'w')
+	    if (0 != cram_flush_container2(fd, c))
+		return -1;
 
 	/* Free the container */
 	for (i = 0; i < c->max_slice; i++) {
-	    cram_free_slice(c->slices[i]);
-	    c->slices[i] = NULL;
+	    if (c->slices && c->slices[i]) {
+		cram_free_slice(c->slices[i]);
+		c->slices[i] = NULL;
+	    }
 	}
 
 	c->slice = NULL;
@@ -3105,7 +3127,7 @@ static int cram_flush_result(cram_fd *fd) {
 
 	ret |= hflush(fd->fp) == 0 ? 0 : -1;
 
-	t_pool_delete_result(r, 1);
+	hts_tpool_delete_result(r, 1);
     }
 
     return ret;
@@ -3121,10 +3143,23 @@ int cram_flush_container_mt(cram_fd *fd, cram_container *c) {
 	return -1;
     j->fd = fd;
     j->c = c;
-    
-    t_pool_dispatch(fd->pool, fd->rqueue, cram_flush_thread, j);
 
-    return cram_flush_result(fd);
+    // Flush the job.  Note our encoder queue may be full, so we
+    // either have to keep trying in non-blocking mode (what we do) or
+    // use a dedicated separate thread for draining the queue.
+    for (;;) {
+	errno = 0;
+	hts_tpool_dispatch2(fd->pool, fd->rqueue, cram_flush_thread, j, 1);
+	int pending = (errno == EAGAIN);
+	if (cram_flush_result(fd) != 0)
+	    return -1;
+	if (!pending)
+	    break;
+
+	usleep(1000);
+    }
+
+    return 0;
 }
 
 /* ----------------------------------------------------------------------
@@ -3262,24 +3297,6 @@ void cram_free_slice(cram_slice *s) {
     if (s->aux_blk)
 	cram_free_block(s->aux_blk);
 
-    if (s->aux_OQ_blk)
-	cram_free_block(s->aux_OQ_blk);
-
-    if (s->aux_BQ_blk)
-	cram_free_block(s->aux_BQ_blk);
-
-    if (s->aux_FZ_blk)
-	cram_free_block(s->aux_FZ_blk);
-
-    if (s->aux_oq_blk)
-	cram_free_block(s->aux_oq_blk);
-
-    if (s->aux_os_blk)
-	cram_free_block(s->aux_os_blk);
-
-    if (s->aux_oz_blk)
-	cram_free_block(s->aux_oz_blk);
-
     if (s->base_blk)
 	cram_free_block(s->base_blk);
 
@@ -3305,6 +3322,9 @@ void cram_free_slice(cram_slice *s) {
 	kh_destroy(m_s2i, s->pair[0]);
     if (s->pair[1])
 	kh_destroy(m_s2i, s->pair[1]);
+
+    if (s->aux_block)
+	free(s->aux_block);
 
     free(s);
 }
@@ -3395,13 +3415,13 @@ cram_slice *cram_read_slice(cram_fd *fd) {
 	break;
 
     default:
-	fprintf(stderr, "Unexpected block of type %s\n",
+	hts_log_error("Unexpected block of type %s",
 		cram_content_type2str(b->content_type));
 	goto err;
     }
 
     if (s->hdr->num_blocks < 1) {
-        fprintf(stderr, "Slice does not include any data blocks.\n");
+	hts_log_error("Slice does not include any data blocks");
 	goto err;
     }
 
@@ -3485,8 +3505,7 @@ cram_file_def *cram_read_file_def(cram_fd *fd) {
     }
 
     if (def->major_version > 3) {
-	fprintf(stderr, "CRAM version number mismatch\n"
-		"Expected 1.x, 2.x or 3.x, got %d.%d\n",
+	hts_log_error("CRAM version number mismatch. Expected 1.x, 2.x or 3.x, got %d.%d",
 		def->major_version, def->minor_version);
 	free(def);
 	return NULL;
@@ -3552,6 +3571,8 @@ SAM_hdr *cram_read_SAM_hdr(cram_fd *fd) {
 	if (!c)
 	    return NULL;
 
+	fd->first_container += c->length + c->offset;
+
 	if (c->num_blocks < 1) {
 	    cram_free_container(c);
 	    return NULL;
@@ -3563,6 +3584,7 @@ SAM_hdr *cram_read_SAM_hdr(cram_fd *fd) {
 	}
 	if (cram_uncompress_block(b) != 0) {
 	    cram_free_container(c);
+	    cram_free_block(b);
 	    return NULL;
 	}
 
@@ -3572,7 +3594,7 @@ SAM_hdr *cram_read_SAM_hdr(cram_fd *fd) {
 	    itf8_size(b->comp_size);
 
 	/* Extract header from 1st block */
-	if (-1 == int32_get(b, &header_len) ||
+	if (-1 == int32_get_blk(b, &header_len) ||
             header_len < 0 || /* Spec. says signed...  why? */
 	    b->uncomp_size - 4 < header_len) {
 	    cram_free_container(c);
@@ -3585,7 +3607,7 @@ SAM_hdr *cram_read_SAM_hdr(cram_fd *fd) {
 	    return NULL;
 	}
 	memcpy(header, BLOCK_END(b), header_len);
-	header[header_len]='\0';
+	header[header_len] = '\0';
 	cram_free_block(b);
 
 	/* Consume any remaining blocks */
@@ -3631,7 +3653,11 @@ SAM_hdr *cram_read_SAM_hdr(cram_fd *fd) {
  * Out must be at least PATH_MAX bytes long.
  */
 static void full_path(char *out, char *in) {
-    if (*in == '/') {
+    size_t in_l = strlen(in);
+    if (*in == '/' ||
+	// Windows paths
+	(in_l > 3 && toupper(*in) >= 'A'  && toupper(*in) <= 'Z' &&
+	 in[1] == ':' && (in[2] == '/' || in[2] == '\\'))) {
 	strncpy(out, in, PATH_MAX);
 	out[PATH_MAX-1] = 0;
     } else {
@@ -3668,7 +3694,7 @@ int cram_write_SAM_hdr(cram_fd *fd, SAM_hdr *hdr) {
 	    return -1;
     }
 
-    /* 1.0 requires and UNKNOWN read-group */
+    /* 1.0 requires an UNKNOWN read-group */
     if (CRAM_MAJOR_VERS(fd->version) == 1) {
 	if (!sam_hdr_find_rg(hdr, "UNKNOWN"))
 	    if (sam_hdr_add(hdr, "RG",
@@ -3748,19 +3774,14 @@ int cram_write_SAM_hdr(cram_fd *fd, SAM_hdr *hdr) {
 	    return -1;
 	}
 
-	int32_put(b, header_len);
-	BLOCK_APPEND(b, sam_hdr_str(hdr), header_len);
+	int32_put_blk(b, header_len);
+	if (header_len)
+            BLOCK_APPEND(b, sam_hdr_str(hdr), header_len);
 	BLOCK_UPLEN(b);
 
 	// Compress header block if V3.0 and above
-	if (CRAM_MAJOR_VERS(fd->version) >= 3 && fd->level > 0) {
-	    int method = 1<<GZIP;
-	    if (fd->use_bz2)
-		method |= 1<<BZIP2;
-	    if (fd->use_lzma)
-		method |= 1<<LZMA;
-	    cram_compress_block(fd, b, NULL, method, fd->level);
-	} 
+	if (CRAM_MAJOR_VERS(fd->version) >= 3)
+	    cram_compress_block(fd, b, NULL, -1, -1);
 
 	if (blank_block) {
 	    c->length = b->comp_size + 2 + 4*is_cram_3 +
@@ -4003,8 +4024,10 @@ cram_fd *cram_dopen(hFILE *fp, const char *filename, const char *mode) {
 	fd->version = fd->file_def->major_version * 256 +
 	    fd->file_def->minor_version;
 
-	if (!(fd->header = cram_read_SAM_hdr(fd)))
+	if (!(fd->header = cram_read_SAM_hdr(fd))) {
+	    cram_free_file_def(fd->file_def);
 	    goto err;
+	}
 
     } else {
 	/* Writer */
@@ -4044,12 +4067,13 @@ cram_fd *cram_dopen(hFILE *fp, const char *filename, const char *mode) {
     fd->ref = NULL;
 
     fd->decode_md = 0;
-    fd->verbose = 0;
     fd->seqs_per_slice = SEQS_PER_SLICE;
+    fd->bases_per_slice = BASES_PER_SLICE;
     fd->slices_per_container = SLICE_PER_CNT;
     fd->embed_ref = 0;
     fd->no_ref = 0;
     fd->ignore_md5 = 0;
+    fd->lossy_read_names = 0;
     fd->use_bz2 = 0;
     fd->use_rans = (CRAM_MAJOR_VERS(fd->version) >= 3);
     fd->use_lzma = 0;
@@ -4067,6 +4091,9 @@ cram_fd *cram_dopen(hFILE *fp, const char *filename, const char *mode) {
 
     for (i = 0; i < DS_END; i++)
 	fd->m[i] = cram_new_metrics();
+
+    if (!(fd->tags_used = kh_init(m_metrics)))
+	goto err;
 
     fd->range.refid = -2; // no ref.
     fd->eof = 1;          // See samtools issue #150
@@ -4128,7 +4155,8 @@ int cram_flush(cram_fd *fd) {
 
     if (fd->mode == 'w' && fd->ctr) {
 	if(fd->ctr->slice)
-	    fd->ctr->curr_slice++;
+	    cram_update_curr_slice(fd->ctr);
+
 	if (-1 == cram_flush_container_mt(fd, fd->ctr))
 	    return -1;
     }
@@ -4150,13 +4178,14 @@ int cram_close(cram_fd *fd) {
 
     if (fd->mode == 'w' && fd->ctr) {
 	if(fd->ctr->slice)
-	    fd->ctr->curr_slice++;
+	    cram_update_curr_slice(fd->ctr);
+
 	if (-1 == cram_flush_container_mt(fd, fd->ctr))
 	    return -1;
     }
 
-    if (fd->pool) {
-	t_pool_flush(fd->pool);
+    if (fd->pool && fd->eof >= 0) {
+	hts_tpool_process_flush(fd->rqueue);
 
 	if (0 != cram_flush_result(fd))
 	    return -1;
@@ -4169,7 +4198,7 @@ int cram_close(cram_fd *fd) {
 
 	//fprintf(stderr, "CRAM: destroy queue %p\n", fd->rqueue);
 
-	t_results_queue_destroy(fd->rqueue);
+	hts_tpool_process_destroy(fd->rqueue);
     }
 
     if (fd->mode == 'w') {
@@ -4230,11 +4259,22 @@ int cram_close(cram_fd *fd) {
 	if (fd->m[i])
 	    free(fd->m[i]);
 
+    if (fd->tags_used) {
+	khint_t k;
+
+	for (k = kh_begin(fd->tags_used); k != kh_end(fd->tags_used); k++) {
+	    if (kh_exist(fd->tags_used, k))
+		free(kh_val(fd->tags_used, k));
+	}
+
+	kh_destroy(m_metrics, fd->tags_used);
+    }
+
     if (fd->index)
 	cram_index_free(fd);
 
     if (fd->own_pool && fd->pool)
-	t_pool_destroy(fd->pool, 0);
+	hts_tpool_destroy(fd->pool);
 
     free(fd);
     return 0;
@@ -4255,7 +4295,7 @@ int cram_eof(cram_fd *fd) {
  * Returns 0 on success
  *        -1 on failure
  */
-int cram_set_option(cram_fd *fd, enum cram_option opt, ...) {
+int cram_set_option(cram_fd *fd, enum hts_fmt_option opt, ...) {
     int r;
     va_list args;
 
@@ -4273,11 +4313,13 @@ int cram_set_option(cram_fd *fd, enum cram_option opt, ...) {
  * Returns 0 on success
  *        -1 on failure
  */
-int cram_set_voption(cram_fd *fd, enum cram_option opt, va_list args) {
+int cram_set_voption(cram_fd *fd, enum hts_fmt_option opt, va_list args) {
     refs_t *refs;
 
-    if (!fd)
+    if (!fd) {
+	errno = EBADF;
 	return -1;
+    }
 
     switch (opt) {
     case CRAM_OPT_DECODE_MD:
@@ -4292,11 +4334,14 @@ int cram_set_voption(cram_fd *fd, enum cram_option opt, va_list args) {
 	break;
 
     case CRAM_OPT_VERBOSITY:
-	fd->verbose = va_arg(args, int);
 	break;
 
     case CRAM_OPT_SEQS_PER_SLICE:
 	fd->seqs_per_slice = va_arg(args, int);
+	break;
+
+    case CRAM_OPT_BASES_PER_SLICE:
+	fd->bases_per_slice = va_arg(args, int);
 	break;
 
     case CRAM_OPT_SLICES_PER_CONTAINER:
@@ -4313,6 +4358,16 @@ int cram_set_voption(cram_fd *fd, enum cram_option opt, va_list args) {
 
     case CRAM_OPT_IGNORE_MD5:
 	fd->ignore_md5 = va_arg(args, int);
+	break;
+
+    case CRAM_OPT_LOSSY_NAMES:
+	fd->lossy_read_names = va_arg(args, int);
+	// Currently lossy read names required paired (attached) reads.
+	// TLEN 0 or being 1 out causes read pairs to be detached, breaking
+	// the lossy read name compression, so we have extra options to
+	// slacken the exact TLEN round-trip checks.
+	fd->tlen_approx = fd->lossy_read_names;
+	fd->tlen_zero = fd->lossy_read_names;
 	break;
 
     case CRAM_OPT_USE_BZIP2:
@@ -4349,14 +4404,14 @@ int cram_set_voption(cram_fd *fd, enum cram_option opt, va_list args) {
 	int major, minor;
 	char *s = va_arg(args, char *);
 	if (2 != sscanf(s, "%d.%d", &major, &minor)) {
-	    fprintf(stderr, "Malformed version string %s\n", s);
+	    hts_log_error("Malformed version string %s", s);
 	    return -1;
 	}
 	if (!((major == 1 &&  minor == 0) ||
 	      (major == 2 && (minor == 0 || minor == 1)) ||
 	      (major == 3 &&  minor == 0))) {
-	    fprintf(stderr, "Unknown version string; "
-		    "use 1.0, 2.0, 2.1 or 3.0\n");
+	    hts_log_error("Unknown version string; use 1.0, 2.0, 2.1 or 3.0");
+	    errno = EINVAL;
 	    return -1;
 	}
 	fd->version = major*256 + minor;
@@ -4373,10 +4428,10 @@ int cram_set_voption(cram_fd *fd, enum cram_option opt, va_list args) {
     case CRAM_OPT_NTHREADS: {
 	int nthreads =  va_arg(args, int);
         if (nthreads > 1) {
-            if (!(fd->pool = t_pool_init(nthreads*2, nthreads)))
+            if (!(fd->pool = hts_tpool_init(nthreads)))
                 return -1;
 
-	    fd->rqueue = t_results_queue_init();
+	    fd->rqueue = hts_tpool_process_init(fd->pool, nthreads*2, 0);
 	    pthread_mutex_init(&fd->metrics_lock, NULL);
 	    pthread_mutex_init(&fd->ref_lock, NULL);
 	    pthread_mutex_init(&fd->bam_list_lock, NULL);
@@ -4386,10 +4441,13 @@ int cram_set_voption(cram_fd *fd, enum cram_option opt, va_list args) {
 	break;
     }
 
-    case CRAM_OPT_THREAD_POOL:
-	fd->pool = va_arg(args, t_pool *);
+    case CRAM_OPT_THREAD_POOL: {
+	htsThreadPool *p = va_arg(args, htsThreadPool *);
+	fd->pool = p ? p->pool : NULL;
 	if (fd->pool) {
-	    fd->rqueue = t_results_queue_init();
+	    fd->rqueue = hts_tpool_process_init(fd->pool,
+						p->qsize ? p->qsize : hts_tpool_size(fd->pool)*2,
+						0);
 	    pthread_mutex_init(&fd->metrics_lock, NULL);
 	    pthread_mutex_init(&fd->ref_lock, NULL);
 	    pthread_mutex_init(&fd->bam_list_lock, NULL);
@@ -4399,17 +4457,74 @@ int cram_set_voption(cram_fd *fd, enum cram_option opt, va_list args) {
 
 	//fd->qsize = 1;
 	//fd->decoded = calloc(fd->qsize, sizeof(cram_container *));
-	//t_pool_dispatch(fd->pool, cram_decoder_thread, fd);
+	//hts_tpool_dispatch(fd->pool, cram_decoder_thread, fd);
 	break;
+    }
 
     case CRAM_OPT_REQUIRED_FIELDS:
 	fd->required_fields = va_arg(args, int);
 	break;
 
+    case HTS_OPT_COMPRESSION_LEVEL:
+	fd->level = va_arg(args, int);
+	break;
+
     default:
-	fprintf(stderr, "Unknown CRAM option code %d\n", opt);
+	hts_log_error("Unknown CRAM option code %d", opt);
+	errno = EINVAL;
 	return -1;
     }
 
     return 0;
+}
+
+int cram_check_EOF(cram_fd *fd)
+{
+    // Byte 9 in these templates is & with 0x0f to resolve differences
+    // between ITF-8 interpretations between early Java and C
+    // implementations of CRAM
+    static const unsigned char TEMPLATE_2_1[30] = {
+        0x0b, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0x0f, 0xe0,
+        0x45, 0x4f, 0x46, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
+        0x01, 0x00, 0x06, 0x06, 0x01, 0x00, 0x01, 0x00, 0x01, 0x00
+    };
+    static const unsigned char TEMPLATE_3[38] = {
+        0x0f, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0x0f, 0xe0,
+        0x45, 0x4f, 0x46, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x05,
+        0xbd, 0xd9, 0x4f, 0x00, 0x01, 0x00, 0x06, 0x06, 0x01, 0x00,
+        0x01, 0x00, 0x01, 0x00, 0xee, 0x63, 0x01, 0x4b
+    };
+
+    unsigned char buf[38]; // max(sizeof TEMPLATE_*)
+
+    uint8_t major = CRAM_MAJOR_VERS(fd->version);
+    uint8_t minor = CRAM_MINOR_VERS(fd->version);
+
+    const unsigned char *template;
+    ssize_t template_len;
+    if ((major < 2) ||
+        (major == 2 && minor == 0)) {
+        return 3; // No EOF support in cram versions less than 2.1
+    } else if (major == 2 && minor == 1) {
+        template = TEMPLATE_2_1;
+        template_len = sizeof TEMPLATE_2_1;
+    } else {
+        template = TEMPLATE_3;
+        template_len = sizeof TEMPLATE_3;
+    }
+
+    off_t offset = htell(fd->fp);
+    if (hseek(fd->fp, -template_len, SEEK_END) < 0) {
+        if (errno == ESPIPE) {
+            hclearerr(fd->fp);
+            return 2;
+        }
+        else {
+            return -1;
+        }
+    }
+    if (hread(fd->fp, buf, template_len) != template_len) return -1;
+    if (hseek(fd->fp, offset, SEEK_SET) < 0) return -1;
+    buf[8] &= 0x0f;
+    return (memcmp(template, buf, template_len) == 0)? 1 : 0;
 }

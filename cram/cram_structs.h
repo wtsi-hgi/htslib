@@ -46,9 +46,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 
+#include <pthread.h>
 #include <stdint.h>
+#include <sys/types.h>
 
-#include "cram/thread_pool.h"
+#include "htslib/thread_pool.h"
 #include "cram/string_alloc.h"
 #include "cram/mFILE.h"
 #include "htslib/khash.h"
@@ -82,13 +84,14 @@ KHASH_MAP_INIT_STR(map, pmap_t)
 struct hFILE;
 
 #define SEQS_PER_SLICE 10000
+#define BASES_PER_SLICE (SEQS_PER_SLICE*500)
 #define SLICE_PER_CNT  1
 
 #define CRAM_SUBST_MATRIX "CGTNAGTNACTNACGNACGT"
 
 #define MAX_STAT_VAL 1024
 //#define MAX_STAT_VAL 16
-typedef struct {
+typedef struct cram_stats {
     int freqs[MAX_STAT_VAL];
     khash_t(m_i2i) *h;
     int nsamp; // total number of values added
@@ -176,7 +179,7 @@ enum cram_DS_ID {
 };
 
 /* "File Definition Structure" */
-typedef struct {
+typedef struct cram_file_def {
     char    magic[4];
     uint8_t major_version;
     uint8_t minor_version;
@@ -189,7 +192,7 @@ typedef struct {
 struct cram_slice;
 
 enum cram_block_method {
-    ERROR    = -1,
+    BM_ERROR = -1,
     RAW      = 0,
     GZIP     = 1,
     BZIP2    = 2,
@@ -245,8 +248,12 @@ typedef struct {
     double lzma_extra;
 } cram_metrics;
 
+// Hash aux key (XX:i) to cram_metrics
+KHASH_MAP_INIT_INT(m_metrics, cram_metrics*)
+
+
 /* Block */
-typedef struct {
+typedef struct cram_block {
     enum cram_block_method  method, orig_method;
     enum cram_content_type  content_type;
     int32_t  content_id;
@@ -260,6 +267,9 @@ typedef struct {
     size_t alloc;
     size_t byte;
     int bit;
+
+    // To aid compression
+    cram_metrics *m; // used to track aux block compression only
 } cram_block;
 
 struct cram_codec; /* defined in cram_codecs.h */
@@ -269,7 +279,7 @@ struct cram_map;
 #define CRAM_MAP(a,b) (((a)*3+(b))&(CRAM_MAP_HASH-1))
 
 /* Compression header block */
-typedef struct {
+typedef struct cram_block_compression_hdr {
     int32_t ref_seq_id;
     int32_t ref_seq_start;
     int32_t ref_seq_span;
@@ -315,8 +325,17 @@ typedef struct cram_map {
     struct cram_map *next; // for noddy internal hash
 } cram_map;
 
+typedef struct cram_tag_map {
+    struct cram_codec *codec;
+    cram_block *blk;
+    cram_metrics *m;
+} cram_tag_map;
+
+// Hash aux key (XX:i) to cram_tag_map
+KHASH_MAP_INIT_INT(m_tagmap, cram_tag_map*)
+
 /* Mapped or unmapped slice header block */
-typedef struct {
+typedef struct cram_block_slice_hdr {
     enum cram_content_type content_type;
     int32_t ref_seq_id;     /* if content_type == MAPPED_SLICE */
     int32_t ref_seq_start;  /* if content_type == MAPPED_SLICE */
@@ -341,7 +360,7 @@ struct ref_entry;
  *
  * OR... are landmarks the start/end points of slices?
  */
-typedef struct {
+typedef struct cram_container {
     int32_t  length;
     int32_t  ref_seq_id;
     int32_t  ref_seq_start;
@@ -385,16 +404,18 @@ typedef struct {
     /* Statistics for encoding */
     cram_stats *stats[DS_END];
 
-    khash_t(s_i2i) *tags_used; // set of tag types in use, for tag encoding map
+    khash_t(m_tagmap) *tags_used; // set of tag types in use, for tag encoding map
     int *refs_used;       // array of frequency of ref seq IDs
 
     uint32_t crc32;       // CRC32
+
+    uint64_t s_num_bases; // number of bases in this slice
 } cram_container;
 
 /*
  * A single cram record
  */
-typedef struct {
+typedef struct cram_record {
     struct cram_slice *s; // Filled out by cram_decode only
 
     int32_t ref_id;       // fixed for all recs in slice?
@@ -448,7 +469,7 @@ typedef struct {
  * A feature is a base difference, used for the sequence reference encoding.
  * (We generate these internally when writing CRAM.)
  */
-typedef struct {
+typedef struct cram_feature {
     union {
 	struct {
 	    int pos;
@@ -555,23 +576,19 @@ typedef struct cram_slice {
     cram_block *qual_blk;
     cram_block *base_blk;
     cram_block *soft_blk;
-    cram_block *aux_blk;
-    cram_block *aux_OQ_blk;
-    cram_block *aux_BQ_blk;
-    cram_block *aux_BD_blk;
-    cram_block *aux_BI_blk;
-    cram_block *aux_FZ_blk;
-    cram_block *aux_oq_blk;
-    cram_block *aux_os_blk;
-    cram_block *aux_oz_blk;
+    cram_block *aux_blk;       // BAM aux block, created while decoding CRAM
 
     string_alloc_t *pair_keys; // Pooled keys for pair hash.
     khash_t(m_s2i) *pair[2];   // for identifying read-pairs in this slice.
 
-    char *ref;               // slice of current reference
-    int ref_start;           // start position of current reference;
-    int ref_end;             // end position of current reference;
+    char *ref;                 // slice of current reference
+    int ref_start;             // start position of current reference;
+    int ref_end;               // end position of current reference;
     int ref_id;
+
+    // For going from BAM to CRAM; an array of auxiliary blocks per type
+    int naux_block;
+    cram_block **aux_block;
 } cram_slice;
 
 /*-----------------------------------------------------------------------------
@@ -588,6 +605,7 @@ typedef struct ref_entry {
     int64_t count;	   // for shared references so we know to dealloc seq
     char *seq;
     mFILE *mf;
+    int is_md5;            // Reference comes from a raw seq found by MD5
 } ref_entry;
 
 KHASH_MAP_INIT_STR(refs, ref_entry*)
@@ -684,11 +702,12 @@ typedef struct cram_fd {
     // compression level and metrics
     int level;
     cram_metrics *m[DS_END];
+    khash_t(m_metrics) *tags_used; // cram_metrics[], per tag types in use.
 
     // options
     int decode_md; // Whether to export MD and NM tags
-    int verbose;
     int seqs_per_slice;
+    int bases_per_slice;
     int slices_per_container;
     int embed_ref;
     int no_ref;
@@ -718,14 +737,18 @@ typedef struct cram_fd {
     
     // thread pool
     int own_pool;
-    t_pool *pool;
-    t_results_queue *rqueue;
+    hts_tpool *pool;
+    hts_tpool_process *rqueue;
     pthread_mutex_t metrics_lock;
     pthread_mutex_t ref_lock;
     spare_bams *bl;
     pthread_mutex_t bam_list_lock;
     void *job_pending;
     int ooc;                            // out of containers.
+
+    int lossy_read_names;               // boolean
+    int tlen_approx;                    // max TLEN calculation offset.
+    int tlen_zero;                      // If true, permit tlen 0 (=> tlen calculated)
 } cram_fd;
 
 // Translation of required fields to cram data series
@@ -771,8 +794,10 @@ enum cram_fields {
 #define CRAM_CIGAR (CRAM_FN | CRAM_FP | CRAM_FC | CRAM_DL | CRAM_IN | \
 		    CRAM_SC | CRAM_HC | CRAM_PD | CRAM_RS | CRAM_RL | CRAM_BF)
 
-#define CRAM_SEQ (CRAM_CIGAR | CRAM_BA | CRAM_QS | CRAM_BS | \
-		  CRAM_RL    | CRAM_AP | CRAM_BB | CRAM_QQ)
+#define CRAM_SEQ (CRAM_CIGAR | CRAM_BA | CRAM_BS | \
+		  CRAM_RL    | CRAM_AP | CRAM_BB)
+
+#define CRAM_QUAL (CRAM_CIGAR | CRAM_RL | CRAM_AP | CRAM_QS | CRAM_QQ)
 
 /* BF bitfields */
 /* Corrected in 1.1. Use bam_flag_swap[bf] and BAM_* macros for 1.0 & 1.1 */
@@ -805,6 +830,11 @@ enum cram_fields {
 #define CRAM_FLAG_DETACHED             (1<<1)
 #define CRAM_FLAG_MATE_DOWNSTREAM      (1<<2)
 #define CRAM_FLAG_NO_SEQ               (1<<3)
+#define CRAM_FLAG_MASK                 ((1<<4)-1)
+
+/* Internal only */
+#define CRAM_FLAG_STATS_ADDED          (1<<30)
+#define CRAM_FLAG_DISCARD_NAME         (1<<31)
 
 #ifdef __cplusplus
 }
