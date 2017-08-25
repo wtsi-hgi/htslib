@@ -9,6 +9,8 @@
 #include <errno.h>
 #include <sys/stat.h>
 
+#include <config.h>
+
 #ifndef PATH_MAX
 #define PATH_MAX FILENAME_MAX
 #endif
