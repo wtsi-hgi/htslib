@@ -48,7 +48,7 @@ int main(int argc, char **argv) {
     }
 
     if(file_size <= 0){
-        printf("Invalid file size '%lli'", file_size);
+        printf("Invalid file size '%lli'", (long long)file_size);
         error_code = EXIT_FAILURE;
     }
 
