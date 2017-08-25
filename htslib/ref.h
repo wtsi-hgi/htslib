@@ -32,7 +32,7 @@ DEALINGS IN THE SOFTWARE.  */
 extern "C" {
 #endif
 
-int m5_to_ref(const char* md_str, BGZF* ref);
+int m5_to_ref(const char *m5_str, BGZF **ref, int64_t* file_size, char **name);
 
 #ifdef __cplusplus
 }

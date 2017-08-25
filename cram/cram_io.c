@@ -1904,7 +1904,8 @@ int cram_set_header(cram_fd *fd, SAM_hdr *hdr) {
  */
 static int cram_populate_ref(cram_fd *fd, int id, ref_entry *r) {
     SAM_hdr_type *ty;
-    SAM_hdr_tag *tag;
+	SAM_hdr_tag *tag;
+	int no_m5 = 0;
 
     hts_log_info("Running cram_populate_ref on fd %p, id %d", (void *)fd, id);
 
@@ -1915,15 +1916,16 @@ static int cram_populate_ref(cram_fd *fd, int id, ref_entry *r) {
 	return -1;
 
     if (!(tag = sam_hdr_find_key(fd->header, ty, "M5", NULL)))
-	goto no_M5;
+		no_m5 = 1;
 
 	const char* m5_str = tag->str+3;
 	hts_log_info("Querying ref %s", m5_str);
 
 	char* name;
-	BGZF bgzf;
+	BGZF* bgzf;
+	int64_t file_size;
 	
-	if(m5_to_ref(m5_str, &name, &bgzf) != 0){
+	if(no_m5 || m5_to_ref(m5_str, &bgzf, &file_size, &name) != 0){
 		refs_t *refs;
 		char *fn;
 
@@ -1963,34 +1965,24 @@ static int cram_populate_ref(cram_fd *fd, int id, ref_entry *r) {
 		return 0;
 	}
 
-	r->length = ref.size;
+	r->length = file_size;
 	r->is_md5 = 1;
 
-	// ----------------------------------------------------
-	/* modified if local_path */
-	r->offset = r->line_length = r->bases_per_line = 0;
-	// set the fp and fn to the value returned by m5_to_ref
-	r->fn = string_dup(fd->refs->pool, name);
-	if (fd->refs->fp)
-		if (bgzf_close(fd->refs->fp) != 0)
-			return -1;
-	fd->refs->fp = bgzf;
-	fd->refs->fn = r->fn;
-	// ----------------------------------------------------
-
-
-	// ----------------------------------------------------
-	/* modifed if searching ref_path */
-	/*
-	if (r->seq) {
-		r->mf = NULL;
+	if(name){
+		r->offset = r->line_length = r->bases_per_line = 0;
+		// set the fp and fn to the value returned by m5_to_ref
+		r->fn = string_dup(fd->refs->pool, name);
+		if (fd->refs->fp)
+			if (bgzf_close(fd->refs->fp) != 0)
+				return -1;
+		fd->refs->fp = bgzf;
+		fd->refs->fn = r->fn;
 	} else {
-		// keep mf around as we couldn't detach
-		r->seq = bgzf->data;
-		r->mf = mf;
+		char* seq;
+		if(hread(bgzf->fp, seq, file_size) != file_size)
+			return -1;
+		r->seq = seq;
 	}
-	*/
-	// ----------------------------------------------------
 
     return 0;
 }

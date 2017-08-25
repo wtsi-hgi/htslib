@@ -145,13 +145,18 @@ void mkdir_prefix(char *path, int mode)
 }
 
 /*
- * Populates the ref parameter with a reference to a BGZF file in a cache
- * for the reference genome for a particular M5 string
+ * Writes to the ref pointer with a reference
+ * to a BGZF file for the reference genome for a particular M5 string.
+ * 
+ * The name parameter is non-NULL for BGZF files representing local files
+ *
+ * The caller is responsible for closing the BGZF file using bgzf_close
+ * and freeing the name parameter
  *
  * Returns 0 on success
  *        -1 on failure
  */
-int m5_to_ref(const char *m5_str, char **name, BGZF *ref) {
+int m5_to_ref(const char *m5_str, BGZF **ref, int64_t* file_size, char **name) {
     char *ref_path = getenv("REF_PATH");
     char path[PATH_MAX], path_tmp[PATH_MAX];
     char cache[PATH_MAX], cache_root[PATH_MAX];
@@ -182,32 +187,35 @@ int m5_to_ref(const char *m5_str, char **name, BGZF *ref) {
 
     /* Use cache if available */
     if (local_cache && *local_cache) {
-        expand_cache_path(path, local_cache, m5_str);
+        expand_cache_path(path, local_cache, (char *)m5_str);
         local_path = 1;
     }
 
 #ifndef HAVE_MMAP
     char *path2;
     /* Search local files in REF_PATH; we can open them and return as above */
-    if (!local_path && (path2 = find_path(m5_str, ref_path))) {
+    if (!local_path && (path2 = find_path((char *)m5_str, ref_path))) {
         strncpy(path, path2, PATH_MAX);
         free(path2);
         if (is_file(path)) // incase it's too long
             local_path = 1;
-        // should really error here?
     }
 #endif
 
     if (local_path){
         struct stat sb;
 
-        if(0 == stat(path, &sb) && (ref = bgzf_open(path, "r")))
+        if((0 == stat(path, &sb)) && (*ref = bgzf_open(path, "r"))){
             /* Found via REF_CACHE or local REF_PATH file */
+            
+            *file_size = sb.st_size;
+            *name = path;
             return 0;
+        }
     }
 
     /* Look in ref_path */
-    if ((mf = open_path_mfile(m5_str, ref_path, NULL))) {
+    if (!(mf = open_path_mfile((char *)m5_str, ref_path, NULL))) {
         return -1;
     }
 
@@ -223,7 +231,7 @@ int m5_to_ref(const char *m5_str, char **name, BGZF *ref) {
                             cache_root);
         }
 
-        expand_cache_path(path, local_cache, m5_str);
+        expand_cache_path(path, local_cache, (char *)m5_str);
         hts_log_info("Writing cache file '%s'", path);
         mkdir_prefix(path, 01777);
 
@@ -239,7 +247,6 @@ int m5_to_ref(const char *m5_str, char **name, BGZF *ref) {
             perror(path_tmp);
 
             // Not fatal - we have the data already so keep going.
-            return 0;
         }
 
         // Check md5sum
@@ -278,11 +285,8 @@ int m5_to_ref(const char *m5_str, char **name, BGZF *ref) {
         }
     }
 
-    int fd = fileno(mf->fp);
-    hFILE* hf = hdopen(fd, "r");
-
     mfdestroy(mf);
     
-    ref = bgzf_hopen(hf, "r");
+    *ref = bgzf_dopen(fileno(mf->fp), "r");
     return 0;
 }
