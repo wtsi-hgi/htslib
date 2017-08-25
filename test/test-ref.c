@@ -61,8 +61,6 @@ int main(int argc, char **argv) {
     char* bgzf_data = malloc(100);
     ssize_t new_file_size = bgzf_read(bgzf, bgzf_data, 100);
 
-    printf("file sizes: %lli %lli", (long long)new_file_size, (long long)file_size);
-
     if (strlen(bgzf_data) == 0){
         printf("Invalid file length");
         error_code = EXIT_FAILURE;
