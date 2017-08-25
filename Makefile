@@ -72,6 +72,7 @@ BUILT_TEST_PROGRAMS = \
 	test/hfile \
 	test/sam \
 	test/test_bgzf \
+	test/test-ref \
 	test/test-regidx \
 	test/test_view \
 	test/test-vcf-api \
@@ -153,6 +154,7 @@ LIBHTS_OBJS = \
 	multipart.o \
 	probaln.o \
 	realn.o \
+	ref.o \
 	regidx.o \
 	sam.o \
 	synced_bcf_reader.o \
@@ -325,13 +327,14 @@ plugin.o plugin.pico: plugin.c config.h $(hts_internal_h) $(htslib_kstring_h)
 probaln.o probaln.pico: probaln.c config.h $(htslib_hts_h)
 realn.o realn.pico: realn.c config.h $(htslib_hts_h) $(htslib_sam_h)
 textutils.o textutils.pico: textutils.c config.h $(htslib_hfile_h) $(htslib_kstring_h) $(hts_internal_h)
+ref.o ref.pico: ref.c config.h $(htslib_kstring_h) $(htslib_bgzf_h) $(cram_h) $(cram_io_h) $(cram_open_trace_file_h) $(htslib_hfile_h)
 
 cram/cram_codecs.o cram/cram_codecs.pico: cram/cram_codecs.c config.h $(cram_h)
 cram/cram_decode.o cram/cram_decode.pico: cram/cram_decode.c config.h $(cram_h) $(cram_os_h) $(htslib_hts_h)
 cram/cram_encode.o cram/cram_encode.pico: cram/cram_encode.c config.h $(cram_h) $(cram_os_h) $(htslib_hts_h) $(htslib_hts_endian_h)
 cram/cram_external.o cram/cram_external.pico: cram/cram_external.c config.h $(htslib_hfile_h) $(cram_h)
 cram/cram_index.o cram/cram_index.pico: cram/cram_index.c config.h $(htslib_bgzf_h) $(htslib_hfile_h) $(hts_internal_h) $(cram_h) $(cram_os_h)
-cram/cram_io.o cram/cram_io.pico: cram/cram_io.c config.h $(cram_h) $(cram_os_h) $(htslib_hts_h) $(cram_open_trace_file_h) cram/rANS_static.h $(htslib_hfile_h) $(htslib_bgzf_h) $(htslib_faidx_h) $(hts_internal_h)
+cram/cram_io.o cram/cram_io.pico: cram/cram_io.c config.h $(cram_h) $(cram_os_h) $(htslib_hts_h) $(htslib_ref_h) $(cram_open_trace_file_h) cram/rANS_static.h $(htslib_hfile_h) $(htslib_bgzf_h) $(htslib_faidx_h) $(hts_internal_h)
 cram/cram_samtools.o cram/cram_samtools.pico: cram/cram_samtools.c config.h $(cram_h) $(htslib_sam_h)
 cram/cram_stats.o cram/cram_stats.pico: cram/cram_stats.c config.h $(cram_h) $(cram_os_h)
 cram/files.o cram/files.pico: cram/files.c config.h $(cram_misc_h)
@@ -368,6 +371,7 @@ check test: $(BUILT_PROGRAMS) $(BUILT_TEST_PROGRAMS)
 	test/fieldarith test/fieldarith.sam
 	test/hfile
 	test/test_bgzf test/bgziptest.txt
+	test/test-ref
 	cd test/tabix && ./test-tabix.sh tabix.tst
 	REF_PATH=: test/sam test/ce.fa test/faidx.fa
 	test/test-regidx
@@ -387,6 +391,9 @@ test/sam: test/sam.o libhts.a
 
 test/test_bgzf: test/test_bgzf.o libhts.a
 	$(CC) $(LDFLAGS) -o $@ test/test_bgzf.o libhts.a -lz $(LIBS) -lpthread
+
+test/test-ref: test/test-ref.o libhts.a
+	$(CC) $(LDFLAGS) -o $@ test/test-ref.o libhts.a -lz $(LIBS) -lpthread
 
 test/test-regidx: test/test-regidx.o libhts.a
 	$(CC) $(LDFLAGS) -o $@ test/test-regidx.o libhts.a $(LIBS) -lpthread
@@ -408,6 +415,7 @@ test/fieldarith.o: test/fieldarith.c config.h $(htslib_sam_h)
 test/hfile.o: test/hfile.c config.h $(htslib_hfile_h) $(htslib_hts_defs_h)
 test/sam.o: test/sam.c config.h $(htslib_hts_defs_h) $(htslib_sam_h) $(htslib_faidx_h) $(htslib_kstring_h)
 test/test_bgzf.o: test/test_bgzf.c $(htslib_bgzf_h) $(htslib_hfile_h)
+test/test-ref.o: test/test-ref.c $(htslib_bgzf_h)
 test/test-regidx.o: test/test-regidx.c config.h $(htslib_regidx_h) $(hts_internal_h)
 test/test_view.o: test/test_view.c config.h $(cram_h) $(htslib_sam_h)
 test/test-vcf-api.o: test/test-vcf-api.c config.h $(htslib_hts_h) $(htslib_vcf_h) $(htslib_kstring_h) $(htslib_kseq_h)

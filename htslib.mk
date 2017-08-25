@@ -65,6 +65,7 @@ HTSLIB_PUBLIC_HEADERS = \
 	$(HTSDIR)/htslib/ksort.h \
 	$(HTSDIR)/htslib/kstring.h \
 	$(HTSDIR)/htslib/regidx.h \
+	$(HTSDIR)/htslib/ref.h \
 	$(HTSDIR)/htslib/sam.h \
 	$(HTSDIR)/htslib/synced_bcf_reader.h \
 	$(HTSDIR)/htslib/tbx.h \
@@ -98,6 +99,7 @@ HTSLIB_ALL = \
 	$(HTSDIR)/probaln.c \
 	$(HTSDIR)/realn.c \
 	$(HTSDIR)/regidx.c \
+	$(HTSDIR)/ref.c \
 	$(HTSDIR)/sam.c \
 	$(HTSDIR)/synced_bcf_reader.c \
 	$(HTSDIR)/tbx.c \
