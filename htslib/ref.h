@@ -1,5 +1,6 @@
-/*  ref.h -- Reference genome fetching
-
+/// @file ref.h
+/// Reference genome fetching
+/*  
     Copyright (C) 2017 Genome Research Ltd.
 
     Author: Thomas Hickman <th10@sanger.ac.uk>
@@ -46,29 +47,31 @@ extern "C" {
 typedef struct {
     BGZF* bgzf;
     char* seq;
-    void* mf;
+    void* mf; // @internal
     char* name;
     int64_t sz;
 } Ref;
 
-/*
- * Writes to the ref pointer with a reference
- * to a BGZF file for the reference genome for a particular M5 string.
- *
+/* m5_to_ref() - populates the ref parameter with the reference genome 
+ * for a given m5 string
+ * @param m5_str: The m5 string to query
+ * @param ref: Modifies this parameter with the information about the 
+ * reference genome. See the struct definition for more information
+ * @return 0 on success
+ *        -1 on failure
+ * 
  * The caller is responsible for closing the ref structure when finished, 
  * using ref_close
  * 
- * This is currently not thread safe, so the caller needs to aquire a mutex
- * before calling this
- *
- * Returns 0 on success
- *        -1 on failure
+ * Note: This function is not currently thread safe, so the caller need to
+ * acquire locks before calling this
  */
 int m5_to_ref(const char *m5_str, Ref* ref);
 
 /*
- * Closes the ref structure
- * Returns 0 on success
+ * ref_close(): Closes the ref structure
+ * @param ref: The ref struct to close
+ * @return 0 on success
  *        -1 on failure
 */
 int ref_close(Ref* ref);
