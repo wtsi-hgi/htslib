@@ -29,6 +29,7 @@ DEALINGS IN THE SOFTWARE.
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+
 char * mystrncpy(char *dest, const char *src, size_t n)
 {
     size_t i;
@@ -101,16 +102,8 @@ int main(int argc, char **argv) {
             }
 
             if (!ref.name || strlen(ref.name) == 0){
-                printf("File path is empty");
+                printf("File path is empty\n");
                 error_code = EXIT_FAILURE;
-                goto close_ref;
-            }
-
-            int code;
-            if ((code = bgzf_check_EOF(ref.bgzf))) {
-                printf("Invalid EOF of bgzf. Error code %i", code);
-                error_code = EXIT_FAILURE;
-                goto close_ref;
             }
         
             char* bgzf_data = malloc(100);
