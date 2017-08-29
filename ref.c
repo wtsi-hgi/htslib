@@ -5,6 +5,7 @@
 #include "cram/cram_io.h"
 #include "cram/open_trace_file.h"
 #include "htslib/hfile.h"
+#include "htslib/ref.h"
 
 #include <errno.h>
 #include <sys/stat.h>
@@ -146,19 +147,27 @@ void mkdir_prefix(char *path, int mode)
     *cp = '/';
 }
 
-/*
- * Writes to the ref pointer with a reference
- * to a BGZF file for the reference genome for a particular M5 string.
- * 
- * The name parameter is non-NULL for BGZF files representing local files
- *
- * The caller is responsible for closing the BGZF file using bgzf_close
- * and freeing the name parameter
- *
- * Returns 0 on success
- *        -1 on failure
- */
-int m5_to_ref(const char *m5_str, BGZF **ref, int64_t* file_size, char **name) {
+// Public functions
+
+int ref_close(Ref* ref){
+    int fail = 0;
+
+    if (ref->bgzf){
+        return bgzf_close(ref->bgzf);
+    }
+    else {
+        free(ref->seq);
+        
+        if(ref->mf == NULL){
+            return 0;
+        }
+        else{
+            return mfclose(ref->mf);
+        }
+    }
+}
+
+int m5_to_ref(const char *m5_str, Ref* ref) {
     char *ref_path = getenv("REF_PATH");
     char path[PATH_MAX], path_tmp[PATH_MAX];
     char cache[PATH_MAX], cache_root[PATH_MAX];
@@ -207,11 +216,12 @@ int m5_to_ref(const char *m5_str, BGZF **ref, int64_t* file_size, char **name) {
     if (local_path){
         struct stat sb;
 
-        if((0 == stat(path, &sb)) && (*ref = bgzf_open(path, "r"))){
+        if((0 == stat(path, &sb)) && (ref->bgzf = bgzf_open(path, "r"))){
             /* Found via REF_CACHE or local REF_PATH file */
             
-            *file_size = sb.st_size;
-            *name = path;
+            ref->seq = NULL;
+            ref->sz = sb.st_size;
+            ref->name = path;
             return 0;
         }
     }
@@ -287,8 +297,21 @@ int m5_to_ref(const char *m5_str, BGZF **ref, int64_t* file_size, char **name) {
         }
     }
 
-    mfdestroy(mf);
+    size_t sz;
     
-    *ref = bgzf_dopen(fileno(mf->fp), "r");
+    ref->seq = mfsteal(mf, &sz);
+    if (ref->seq)
+    {
+        ref->mf = NULL;
+    }
+    else
+    {
+        // keep mf around as we couldn't detach
+        ref->seq = mf->data;
+        ref->mf = mf;
+    }
+    ref->bgzf = NULL;
+    ref->name = NULL;
+
     return 0;
 }

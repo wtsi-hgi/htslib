@@ -27,12 +27,48 @@ DEALINGS IN THE SOFTWARE.  */
 #define HTSLIB_VCF_H
 
 #include "bgzf.h"
+#include "../cram/mFILE.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-int m5_to_ref(const char *m5_str, BGZF **ref, int64_t* file_size, char **name);
+/*
+ * Output parameter type of m5_to_ref.
+ * 
+ * If the file is read from a local path, the parameter seq is NULL,
+ * bgzf contains a pointer to the cached bgzf file and the parameter name
+ * contains the name of the local file.
+ *
+ * If not, seq contains the text of the sequence file and everything apart
+ * from seq and sz is NULL.
+*/
+typedef struct {
+    BGZF* bgzf;
+    char* seq;
+    void* mf;
+    char* name;
+    int64_t sz;
+} Ref;
+
+/*
+ * Writes to the ref pointer with a reference
+ * to a BGZF file for the reference genome for a particular M5 string.
+ *
+ * The caller is responsible for closing the ref structure when finished, 
+ * using ref_close
+ *
+ * Returns 0 on success
+ *        -1 on failure
+ */
+int m5_to_ref(const char *m5_str, Ref* ref);
+
+/*
+ * Closes the ref structure
+ * Returns 0 on success
+ *        -1 on failure
+*/
+int ref_close(Ref* ref);
 
 #ifdef __cplusplus
 }

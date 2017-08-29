@@ -1921,11 +1921,9 @@ static int cram_populate_ref(cram_fd *fd, int id, ref_entry *r) {
 	const char* m5_str = tag->str+3;
 	hts_log_info("Querying ref %s", m5_str);
 
-	char* name;
-	BGZF* bgzf;
-	int64_t file_size;
+	Ref ref;
 	
-	if(no_m5 || m5_to_ref(m5_str, &bgzf, &file_size, &name) != 0){
+	if(no_m5 || m5_to_ref(m5_str, &ref) != 0){
 		refs_t *refs;
 		char *fn;
 
@@ -1965,23 +1963,21 @@ static int cram_populate_ref(cram_fd *fd, int id, ref_entry *r) {
 		return 0;
 	}
 
-	r->length = file_size;
+	r->length = ref.sz;
 	r->is_md5 = 1;
 
-	if(name){
+	if(ref.name){
 		r->offset = r->line_length = r->bases_per_line = 0;
 		// set the fp and fn to the value returned by m5_to_ref
-		r->fn = string_dup(fd->refs->pool, name);
+		r->fn = string_dup(fd->refs->pool, ref.name);
 		if (fd->refs->fp)
 			if (bgzf_close(fd->refs->fp) != 0)
 				return -1;
-		fd->refs->fp = bgzf;
+		fd->refs->fp = ref.bgzf;
 		fd->refs->fn = r->fn;
 	} else {
-		char* seq;
-		if(hread(bgzf->fp, seq, file_size) != file_size)
-			return -1;
-		r->seq = seq;
+		r->seq = ref.seq;
+		r->mf = ref.mf;
 	}
 
     return 0;
