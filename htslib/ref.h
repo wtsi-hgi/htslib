@@ -57,6 +57,9 @@ typedef struct {
  *
  * The caller is responsible for closing the ref structure when finished, 
  * using ref_close
+ * 
+ * This is currently not thread safe, so the caller needs to aquire a mutex
+ * before calling this
  *
  * Returns 0 on success
  *        -1 on failure
