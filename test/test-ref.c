@@ -53,7 +53,7 @@ int main(int argc, char **argv) {
     char* tmp_dir = mkdtemp(template);
     
     if (tmp_dir == NULL){
-        printf("Error creating tmp dir");
+        printf("Error creating tmp dir\n");
         goto end;
     }
     
@@ -61,7 +61,9 @@ int main(int argc, char **argv) {
     char* prev_REF_CACHE;
 
     if(tmp != NULL){
-        strncpy(prev_REF_CACHE, tmp, 1);
+        int len = strlen(tmp);
+        prev_REF_CACHE = malloc(len + 1);
+        strcpy(prev_REF_CACHE, tmp);
     }
     else{
         prev_REF_CACHE = NULL;
@@ -73,13 +75,13 @@ int main(int argc, char **argv) {
 
     for(i = 0;i < 2;i++){
         if (m5_to_ref(m5_str, &ref) != 0){
-            printf("Error in m5_to_ref");
+            printf("Error in m5_to_ref\n");
             error_code = EXIT_FAILURE;
             break;
         }
         
         if(ref.sz <= 0){
-            printf("Invalid file size '%lli'", (long long)ref.sz);
+            printf("Invalid file size '%lli'\n", (long long)ref.sz);
             error_code = EXIT_FAILURE;
             break;
         }
@@ -87,13 +89,13 @@ int main(int argc, char **argv) {
         if (i == 0){
             // Should read from the network
             if(!ref.seq){
-                printf("m5_to_ref doesn't populate seq when loading over the network");
+                printf("m5_to_ref doesn't populate seq when loading over the network\n");
             }            
         }
         else{
             // Read from the cache
             if(!ref.bgzf){
-                printf("m5_to_ref doesn't populate bgzf, when using the cache");
+                printf("When using the cache, m5_to_ref doesn't populate bgzf\n");
                 error_code = EXIT_FAILURE;
                 goto close_ref;
             }
@@ -115,7 +117,7 @@ int main(int argc, char **argv) {
             ssize_t new_file_size = bgzf_read(ref.bgzf, bgzf_data, 100);
         
             if (new_file_size < 0){
-                printf("Invalid file length");
+                printf("Invalid file length\n");
                 error_code = EXIT_FAILURE;
                 goto close_ref;
             }
@@ -126,7 +128,7 @@ int main(int argc, char **argv) {
         close_ref:
 
         if(ref_close(&ref) != 0){
-            printf("Failed to close ref");
+            printf("Failed to close ref\n");
             error_code = EXIT_FAILURE;
         }
     }
