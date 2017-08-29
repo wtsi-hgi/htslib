@@ -43,8 +43,7 @@ char * mystrncpy(char *dest, const char *src, size_t n)
 }
 
 int main(int argc, char **argv) {
-    const char* m5_str = "ac37ec46683600f808cdd41eac1d55cd";
-    int64_t file_size;
+    const char* m5_str = "bbf4de6d8497a119dda6e074521643dc";
     
     int error_code = EXIT_SUCCESS;
     
