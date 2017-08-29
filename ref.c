@@ -157,7 +157,7 @@ int ref_close(Ref* ref){
     }
     else {
         free(ref->seq);
-        
+
         if(ref->mf == NULL){
             return 0;
         }
@@ -228,6 +228,7 @@ int m5_to_ref(const char *m5_str, Ref* ref) {
 
     /* Look in ref_path */
     if (!(mf = open_path_mfile((char *)m5_str, ref_path, NULL))) {
+        hts_log_error("Failed to fetch file. REF_PATH: '%s', M5: '%s'", ref_path, m5_str);
         return -1;
     }
 
