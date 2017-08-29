@@ -43,8 +43,6 @@ char * mystrncpy(char *dest, const char *src, size_t n)
 
 int main(int argc, char **argv) {
     const char* m5_str = "ac37ec46683600f808cdd41eac1d55cd";
-    BGZF* bgzf;
-    char* file_path;
     int64_t file_size;
     
     int error_code = EXIT_SUCCESS;
@@ -71,7 +69,9 @@ int main(int argc, char **argv) {
 
     setenv("REF_CACHE", template, 1);    
     
-    for(int i = 0;i < 2;i++){
+    int i;
+
+    for(i = 0;i < 2;i++){
         if (m5_to_ref(m5_str, &ref) != 0){
             printf("Error in m5_to_ref");
             error_code = EXIT_FAILURE;
@@ -114,7 +114,7 @@ int main(int argc, char **argv) {
             char* bgzf_data = malloc(100);
             ssize_t new_file_size = bgzf_read(ref.bgzf, bgzf_data, 100);
         
-            if (strlen(bgzf_data) < 100){
+            if (new_file_size < 0){
                 printf("Invalid file length");
                 error_code = EXIT_FAILURE;
                 goto close_ref;
