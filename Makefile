@@ -393,7 +393,7 @@ test/test_bgzf: test/test_bgzf.o libhts.a
 	$(CC) $(LDFLAGS) -o $@ test/test_bgzf.o libhts.a -lz $(LIBS) -lpthread
 
 test/test-ref: test/test-ref.o libhts.a
-	$(CC) $(LDFLAGS) -o $@ test/test-ref.o libhts.a -lz $(LIBS) -lpthread
+	$(CC) $(LDFLAGS) -o $@ test/test-ref.o libhts.a $(LIBS) -lpthread
 
 test/test-regidx: test/test-regidx.o libhts.a
 	$(CC) $(LDFLAGS) -o $@ test/test-regidx.o libhts.a $(LIBS) -lpthread
