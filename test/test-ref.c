@@ -25,6 +25,7 @@ DEALINGS IN THE SOFTWARE.
 
 #include "htslib/ref.h"
 #include "htslib/bgzf.h"
+#include "htslib/hfile.h"
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -47,16 +48,16 @@ int main(int argc, char **argv) {
     
     int error_code = EXIT_SUCCESS;
     
-    Ref ref;
+    hFILE* ref;
     
     char template[] = "/tmp/htslib_testXXXXXX";
     char* tmp_dir = mkdtemp(template);
     
     if (tmp_dir == NULL){
         printf("Error creating tmp dir\n");
-        goto end;
+        return EXIT_FAILURE;
     }
-    
+
     char* tmp = getenv("REF_CACHE");
     char* prev_REF_CACHE;
 
@@ -79,53 +80,29 @@ int main(int argc, char **argv) {
             error_code = EXIT_FAILURE;
             break;
         }
-        
-        if(ref.sz <= 0){
-            printf("Invalid file size '%lli'\n", (long long)ref.sz);
+
+        char buf[100];
+
+        size_t size_read = hread(ref, buf, 100);
+        if(size_read <= 0){
+            printf("Invalid hfile size read\n");
             error_code = EXIT_FAILURE;
             break;
         }
-        
-        if (i == 0){
-            // Should read from the network
-            if(!ref.seq){
-                printf("m5_to_ref doesn't populate seq when loading over the network\n");
-            }            
-        }
-        else{
-            // Read from the cache
-            if(!ref.bgzf){
-                printf("When using the cache, m5_to_ref doesn't populate bgzf\n");
-                error_code = EXIT_FAILURE;
-                goto close_ref;
-            }
 
-            if (!ref.name || strlen(ref.name) == 0){
-                printf("File path is empty\n");
-                error_code = EXIT_FAILURE;
-            }
-        
-            char* bgzf_data = malloc(100);
-            ssize_t new_file_size = bgzf_read(ref.bgzf, bgzf_data, 100);
-        
-            if (new_file_size < 0){
-                printf("Invalid file length\n");
-                error_code = EXIT_FAILURE;
-                goto close_ref;
-            }
-
-            free(bgzf_data);
-        }
-
-        close_ref:
-
-        if(ref_close(&ref) != 0){
-            printf("Failed to close ref\n");
+        if(strlen(buf) != size_read){
+            printf("Invalid hfile\n");
             error_code = EXIT_FAILURE;
+            break;
+        }
+
+        if(hclose(ref) != 0){
+            printf("Cannot close hfile");
+            error_code = EXIT_FAILURE;
+            break;
         }
     }
 
-    end:
     if(prev_REF_CACHE){
         setenv("REF_CACHE", prev_REF_CACHE, 1);
     }
