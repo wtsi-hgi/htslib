@@ -66,7 +66,7 @@ typedef struct {
  * Note: This function is not currently thread safe, so the caller need to
  * acquire locks before calling this
  */
-int m5_to_ref(const char *m5_str, Ref* ref);
+int m5_to_ref(const char *m5_str, hFILE** ref);
 
 /*
  * ref_close(): Closes the ref structure

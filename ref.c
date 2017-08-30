@@ -549,12 +549,14 @@ int ref_close(Ref* ref){
     }
 }
 
-int m5_to_ref(const char *m5_str, Ref* ref) {
+#define READ_CHUNK_SIZE 8192
+
+int m5_to_ref(const char *m5_str, hFILE** ref) {
     char *ref_path = getenv("REF_PATH");
     char path[PATH_MAX], path_tmp[PATH_MAX];
     char cache[PATH_MAX], cache_root[PATH_MAX];
     char *local_cache = getenv("REF_CACHE");
-    mFILE *mf;
+    hFILE *hf;
 
     cache_root[0] = '\0';    
 
@@ -598,20 +600,19 @@ int m5_to_ref(const char *m5_str, Ref* ref) {
     if (local_path){
         struct stat sb;
 
-        if((0 == stat(path, &sb)) && (ref->bgzf = bgzf_open(path, "r"))){
+        if((0 == stat(path, &sb)) && (*ref = hopen(path, "r"))){
             /* Found via REF_CACHE or local REF_PATH file */
-            
+            // TODO: replicate this
+            /*
             ref->seq = NULL;
             ref->sz = sb.st_size;
-            ref->name = path;
+            ref->name = path;*/
             return 0;
         }
     }
 
-    hFILE* hf = open_path_hfile(m5_str, ref_path);
-
     /* Look in ref_path */
-    if (!(mf = open_path_hfile((char *)m5_str, ref_path))) {
+    if (!(hf = open_path_hfile(m5_str, ref_path))) {
         hts_log_error("Failed to fetch file. REF_PATH: '%s', M5: '%s'", ref_path, m5_str);
         return -1;
     }
@@ -646,7 +647,7 @@ int m5_to_ref(const char *m5_str, Ref* ref) {
             // Not fatal - we have the data already so keep going.
         }
 
-        // Check md5sum
+        // Stream the file into the cache and check the md5
         hts_md5_context *md5;
         char unsigned md5_buf1[16];
         char md5_buf2[33];
@@ -656,7 +657,20 @@ int m5_to_ref(const char *m5_str, Ref* ref) {
             unlink(path_tmp);
             return -1;
         }
-        hts_md5_update(md5, mf->data, mf->size);
+
+        int read_length;
+        char buf[READ_CHUNK_SIZE];
+
+        while ((read_length = hread(hf, buf, READ_CHUNK_SIZE)) > 0) {
+            hts_md5_update(md5, buf, read_length);
+            if(hwrite(fp, buf, read_length) != read_length){
+                // Kill code
+                perror(path);
+                hclose_abruptly(hf);
+                return -1;
+            }
+        }
+
         hts_md5_final(md5_buf1, md5);
         hts_md5_destroy(md5);
         hts_md5_hex(md5_buf2, md5_buf1);
@@ -668,35 +682,17 @@ int m5_to_ref(const char *m5_str, Ref* ref) {
             return -1;
         }
 
-        if (hwrite(fp, mf->data, mf->size) != mf->size) {
-            perror(path);
-        }
-        if (hclose(fp) < 0) {
-            unlink(path_tmp);
-        }
-        else {
-            if (0 == chmod(path_tmp, 0444))
-                rename(path_tmp, path);
-            else
-                unlink(path_tmp);
-        }
-    }
+        if (0 == chmod(path_tmp, 0444))
+            rename(path_tmp, path);
+        else
+            unlink(path_tmp);   // TODO: why delete if you can't set to read only
 
-    size_t sz;
-    
-    ref->seq = mfsteal(mf, &sz);
-    if (ref->seq)
-    {
-        ref->mf = NULL;
+        *ref = fp;
     }
-    else
-    {
-        // keep mf around as we couldn't detach
-        ref->seq = mf->data;
-        ref->mf = mf;
+    else {
+        // We aren't fetching from the cache or have saved a cached copy
+        *ref = hf;
     }
-    ref->bgzf = NULL;
-    ref->name = NULL;
 
     return 0;
 }
