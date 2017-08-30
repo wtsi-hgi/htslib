@@ -33,18 +33,27 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "cram/cram.h"
 #include "cram/cram_io.h"
-#include "cram/open_trace_file.h"
+#include "cram/os.h"
+#include "cram/misc.h"
 #include "htslib/hfile.h"
 #include "htslib/ref.h"
+#include "htslib/hfile.h"
 
 #include <errno.h>
 #include <sys/stat.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+#include <limits.h>
+#include <sys/types.h>
 
 #include <config.h>
 
 #ifndef PATH_MAX
-#define PATH_MAX FILENAME_MAX
+#define PATH_MAX FILENAME_MAX // was 1024 in open_trace_file
 #endif
+
 
 /*
  * Return the cache directory to use, based on the first of these
@@ -179,6 +188,8 @@ void mkdir_prefix(char *path, int mode)
 
 // copied from open_trace_file
 
+// Original file from open_trace_file
+
 /*
 Author: James Bonfield
 
@@ -213,36 +224,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 /*
-Copyright (c) 2008, 2009, 2013, 2014 Genome Research Ltd.
-Author: James Bonfield <jkb@sanger.ac.uk>
-
-Redistribution and use in source and binary forms, with or without 
-modification, are permitted provided that the following conditions are met:
-
-   1. Redistributions of source code must retain the above copyright notice, 
-this list of conditions and the following disclaimer.
-
-   2. Redistributions in binary form must reproduce the above copyright notice, 
-this list of conditions and the following disclaimer in the documentation 
-and/or other materials provided with the distribution.
-
-   3. Neither the names Genome Research Ltd and Wellcome Trust Sanger
-Institute nor the names of its contributors may be used to endorse or promote
-products derived from this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY GENOME RESEARCH LTD AND CONTRIBUTORS "AS IS" AND 
-ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED 
-WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE 
-DISCLAIMED. IN NO EVENT SHALL GENOME RESEARCH LTD OR CONTRIBUTORS BE LIABLE
-FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
-OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-*/
-
-/*
  * Tokenises the search path splitting on colons (unix) or semicolons
  * (windows).
  * We also  explicitly add a "./" to the end of the search path
@@ -254,7 +235,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  * The returned data has been malloced. It is up to the caller to free this
  * memory.
  */
- char *tokenise_search_path(char *searchpath) {
+char *tokenise_search_path(char *searchpath) {
     char *newsearch;
     unsigned int i, j;
     size_t len;
@@ -324,44 +305,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
     newsearch[j++] = 0;
     
     return newsearch;
-}
-
-mFILE *find_file_url(char *file, char *url) {
-    char buf[8192], *cp;
-    mFILE *mf = NULL;
-    int maxlen = 8190 - strlen(file), len;
-    hFILE *hf;
-
-    /* Expand %s for the trace name */
-    for (cp = buf; *url && cp - buf < maxlen; url++) {
-	if (*url == '%' && *(url+1) == 's') {
-	    url++;
-	    cp += strlen(strcpy(cp, file));
-	} else {
-	    *cp++ = *url;
-	}
-    }
-    *cp++ = 0;
-
-    if (!(hf = hopen(buf, "r")))
-	return NULL;
-
-    if (NULL == (mf = mfcreate(NULL, 0)))
-	return NULL;
-    while ((len = hread(hf, buf, 8192)) > 0) {
-	if (mfwrite(buf, len, 1, mf) <= 0) {
-	    hclose_abruptly(hf);
-	    mfdestroy(mf);
-	    return NULL;
-	}
-    }
-    if (hclose(hf) < 0 || len < 0) {
-	mfdestroy(mf);
-	return NULL;
-    }
-
-    mrewind(mf);
-    return mf;
 }
 
 /*
@@ -434,17 +377,38 @@ static char *expand_path(char *file, char *dirname) {
  * Returns mFILE pointer if found
  *         NULL if not
  */
-static mFILE *find_file_dir(char *file, char *dirname) {
+static hFILE *find_file_dir(char *file, char *dirname) {
     char *path;
-    mFILE *mf = NULL;
+    hFILE *hf = NULL;
 
     path = expand_path(file, dirname);
 
     if (is_file(path))
-	mf = mfopen(path, "rbm");
+	hf = hopen(path, "rbm");
 
     free(path);
-    return mf;
+    return hf;
+}
+
+hFILE *find_file_url(char *file, char *url) {
+    char buf[8192], *cp;
+    mFILE *mf = NULL;
+    int maxlen = 8190 - strlen(file), len;
+    hFILE *hf;
+
+    // FIXME: should this use expand_path
+    /* Expand %s for the trace name */
+    for (cp = buf; *url && cp - buf < maxlen; url++) {
+	if (*url == '%' && *(url+1) == 's') {
+	    url++;
+	    cp += strlen(strcpy(cp, file));
+	} else {
+	    *cp++ = *url;
+	}
+    }
+    *cp++ = 0;
+
+    return hopen(buf, "r");
 }
 
 /*
@@ -464,17 +428,17 @@ static mFILE *find_file_dir(char *file, char *dirname) {
  * all of the locations listed in 'path' (which is a colon separated list).
  * If 'path' is NULL it uses the RAWDATA environment variable instead.
  *
- * Returns a mFILE pointer when found.
+ * Returns a hFILE pointer when found.
  *           NULL otherwise.
  */
-mFILE *open_path_mfile(char *file, char *path, char *relative_to) {
+hFILE *open_path_hfile(char *file, char *path) {
     char *newsearch;
     char *ele;
-    mFILE *fp;
+    hFILE *fp;
 
     /* Use path first */
     if (!path)
-	path = getenv("RAWDATA");
+	path = getenv("RAWDATA"); // FIXME: is this necessary?
     if (NULL == (newsearch = tokenise_search_path(path)))
 	return NULL;
     
@@ -484,50 +448,39 @@ mFILE *open_path_mfile(char *file, char *path, char *relative_to) {
      * special, otherwise we treat the element as a directory.
      */
     for (ele = newsearch; *ele; ele += strlen(ele)+1) {
-	char *ele2;
+	    char *ele2;
 
-	/*
-	 * '|' prefixing a path component indicates that we do not
-	 * wish to perform the compression extension searching in that
-	 * location.
-	 *
-	 * NB: this has been removed from the htslib implementation.
-	 */
-	if (*ele == '|') {
-	    ele2 = ele+1;
-	} else {
-	    ele2 = ele;
-	}
+        /*
+        * '|' prefixing a path component indicates that we do not
+        * wish to perform the compression extension searching in that
+        * location.
+        *
+        * NB: this has been removed from the htslib implementation.
+        */
+        if (*ele == '|') {
+            ele2 = ele+1;
+        } else {
+            ele2 = ele;
+        }
 
-	if (0 == strncmp(ele2, "URL=", 4)) {
-	    if ((fp = find_file_url(file, ele2+4))) {
-		free(newsearch);
-		return fp;
-	    }
-	} else if (!strncmp(ele2, "http:", 5) ||
-		   !strncmp(ele2, "ftp:", 4)) {
-	    if ((fp = find_file_url(file, ele2))) {
-		free(newsearch);
-		return fp;
-	    }
-	} else if ((fp = find_file_dir(file, ele2))) {
-	    free(newsearch);
-	    return fp;
-	} 
+        if (0 == strncmp(ele2, "URL=", 4)) {
+            if ((fp = find_file_url(file, ele2+4))) {
+            free(newsearch);
+            return fp;
+            }
+        } else if (!strncmp(ele2, "http:", 5) ||
+            !strncmp(ele2, "ftp:", 4)) {
+            if ((fp = find_file_url(file, ele2))) {
+            free(newsearch);
+            return fp;
+            }
+        } else if ((fp = find_file_dir(file, ele2))) {
+            free(newsearch);
+            return fp;
+        } 
     }
 
     free(newsearch);
-
-    /* Look in the same location as the incoming 'relative_to' filename */
-    if (relative_to) {
-	char *cp;
-	char relative_path[PATH_MAX+1];
-	strcpy(relative_path, relative_to);
-	if ((cp = strrchr(relative_path, '/')))
-	    *cp = 0;
-	if ((fp = find_file_dir(file, relative_path)))
-	    return fp;
-    }
 
     return NULL;
 }
@@ -656,7 +609,7 @@ int m5_to_ref(const char *m5_str, Ref* ref) {
     }
 
     /* Look in ref_path */
-    if (!(mf = open_path_mfile((char *)m5_str, ref_path, NULL))) {
+    if (!(mf = open_path_hfile((char *)m5_str, ref_path))) {
         hts_log_error("Failed to fetch file. REF_PATH: '%s', M5: '%s'", ref_path, m5_str);
         return -1;
     }
