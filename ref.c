@@ -235,7 +235,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  * The returned data has been malloced. It is up to the caller to free this
  * memory.
  */
-char *tokenise_search_path(char *searchpath) {
+char *tokenise_search_path(const char *searchpath) {
     char *newsearch;
     unsigned int i, j;
     size_t len;
@@ -313,7 +313,7 @@ char *tokenise_search_path(char *searchpath) {
  *
  * Returns expanded pathname or NULL for malloc failure.
  */
-static char *expand_path(char *file, char *dirname) {
+static char *expand_path(const char *file, const char *dirname) {
     size_t len = strlen(dirname);
     size_t lenf = strlen(file);
     char *cp, *path;
@@ -377,7 +377,7 @@ static char *expand_path(char *file, char *dirname) {
  * Returns mFILE pointer if found
  *         NULL if not
  */
-static hFILE *find_file_dir(char *file, char *dirname) {
+static hFILE *find_file_dir(const char *file, const char *dirname) {
     char *path;
     hFILE *hf = NULL;
 
@@ -390,7 +390,7 @@ static hFILE *find_file_dir(char *file, char *dirname) {
     return hf;
 }
 
-hFILE *find_file_url(char *file, char *url) {
+hFILE *find_file_url(const char *file, const char *url) {
     char buf[8192], *cp;
     mFILE *mf = NULL;
     int maxlen = 8190 - strlen(file), len;
@@ -431,7 +431,7 @@ hFILE *find_file_url(char *file, char *url) {
  * Returns a hFILE pointer when found.
  *           NULL otherwise.
  */
-hFILE *open_path_hfile(char *file, char *path) {
+hFILE *open_path_hfile(const char *file, const char *path) {
     char *newsearch;
     char *ele;
     hFILE *fp;
@@ -607,6 +607,8 @@ int m5_to_ref(const char *m5_str, Ref* ref) {
             return 0;
         }
     }
+
+    hFILE* hf = open_path_hfile(m5_str, ref_path);
 
     /* Look in ref_path */
     if (!(mf = open_path_hfile((char *)m5_str, ref_path))) {
