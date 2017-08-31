@@ -28,53 +28,24 @@ DEALINGS IN THE SOFTWARE.  */
 #define HTSLIB_VCF_H
 
 #include "bgzf.h"
-#include "../cram/mFILE.h"
+#include "htslib/hfile.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/*
- * Output parameter type of m5_to_ref.
- * 
- * If the file is read from a local path, the parameter seq is NULL,
- * bgzf contains a pointer to the cached bgzf file and the parameter name
- * contains the name of the local file.
- *
- * If not, seq contains the text of the sequence file and everything apart
- * from seq and sz is NULL.
-*/
-typedef struct {
-    BGZF* bgzf;
-    char* seq;
-    void* mf; // @internal
-    char* name;
-    int64_t sz;
-} Ref;
-
 /* m5_to_ref() - populates the ref parameter with the reference genome 
  * for a given m5 string
  * @param m5_str: The m5 string to query
- * @param ref: Modifies this parameter with the information about the 
- * reference genome. See the struct definition for more information
+ * @param ref: This function modifies this parameter with a hFile of the reference
+ * genome corresponding to the given m5 string
  * @return 0 on success
  *        -1 on failure
- * 
- * The caller is responsible for closing the ref structure when finished, 
- * using ref_close
  * 
  * Note: This function is not currently thread safe, so the caller need to
  * acquire locks before calling this
  */
 int m5_to_ref(const char *m5_str, hFILE** ref);
-
-/*
- * ref_close(): Closes the ref structure
- * @param ref: The ref struct to close
- * @return 0 on success
- *        -1 on failure
-*/
-int ref_close(Ref* ref);
 
 #ifdef __cplusplus
 }
