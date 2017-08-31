@@ -90,12 +90,6 @@ int main(int argc, char **argv) {
             break;
         }
 
-        if(strlen(buf) != size_read){
-            printf("Invalid hfile\n");
-            error_code = EXIT_FAILURE;
-            break;
-        }
-
         if(hclose(ref) != 0){
             printf("Cannot close hfile");
             error_code = EXIT_FAILURE;
