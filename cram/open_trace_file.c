@@ -163,8 +163,8 @@ char *tokenise_search_path(char *searchpath) {
     return newsearch;
 }
 
-mFILE *find_file_url(char *file, char *url) {
-    char buf[8192], *cp;
+mFILE *find_file_url(char *file, char *url, char **resolved_file) {
+    char *buf = malloc(8192), *cp;
     mFILE *mf = NULL;
     int maxlen = 8190 - strlen(file), len;
     hFILE *hf;
@@ -198,6 +198,8 @@ mFILE *find_file_url(char *file, char *url) {
     }
 
     mrewind(mf);
+	
+	*resolved_file = buf;
     return mf;
 }
 
@@ -271,16 +273,14 @@ static char *expand_path(char *file, char *dirname) {
  * Returns mFILE pointer if found
  *         NULL if not
  */
-static mFILE *find_file_dir(char *file, char *dirname) {
-    char *path;
+static mFILE *find_file_dir(char *file, char *dirname, char** resolved_file) {
     mFILE *mf = NULL;
 
-    path = expand_path(file, dirname);
+    *resolved_file = expand_path(file, dirname);
 
-    if (is_file(path))
-	mf = mfopen(path, "rbm");
+    if (is_file(*resolved_file))
+	mf = mfopen(*resolved_file, "rbm");
 
-    free(path);
     return mf;
 }
 
@@ -304,7 +304,7 @@ static mFILE *find_file_dir(char *file, char *dirname) {
  * Returns a mFILE pointer when found.
  *           NULL otherwise.
  */
-mFILE *open_path_mfile(char *file, char *path, char *relative_to) {
+mFILE *open_path_mfile(char *file, char *path, char *relative_to, char **resolved_file) {
     char *newsearch;
     char *ele;
     mFILE *fp;
@@ -337,17 +337,17 @@ mFILE *open_path_mfile(char *file, char *path, char *relative_to) {
 	}
 
 	if (0 == strncmp(ele2, "URL=", 4)) {
-	    if ((fp = find_file_url(file, ele2+4))) {
+	    if ((fp = find_file_url(file, ele2+4, resolved_file))) {
 		free(newsearch);
 		return fp;
 	    }
 	} else if (!strncmp(ele2, "http:", 5) ||
 		   !strncmp(ele2, "ftp:", 4)) {
-	    if ((fp = find_file_url(file, ele2))) {
+	    if ((fp = find_file_url(file, ele2, resolved_file))) {
 		free(newsearch);
 		return fp;
 	    }
-	} else if ((fp = find_file_dir(file, ele2))) {
+	} else if ((fp = find_file_dir(file, ele2, resolved_file))) {
 	    free(newsearch);
 	    return fp;
 	} 
@@ -362,7 +362,7 @@ mFILE *open_path_mfile(char *file, char *path, char *relative_to) {
 	strcpy(relative_path, relative_to);
 	if ((cp = strrchr(relative_path, '/')))
 	    *cp = 0;
-	if ((fp = find_file_dir(file, relative_path)))
+	if ((fp = find_file_dir(file, relative_path, resolved_file)))
 	    return fp;
     }
 

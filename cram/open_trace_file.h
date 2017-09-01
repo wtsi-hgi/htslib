@@ -99,13 +99,13 @@ char *tokenise_search_path(char *searchpath);
  * Returns a mFILE pointer when found.
  *           NULL otherwise.
  */
-mFILE *open_path_mfile(char *file, char *path, char *relative_to);
+ mFILE *open_path_mfile(char *file, char *path, char *relative_to, char **resolved_file);
 
 /*
  * Returns a mFILE containing the entire contents of the url;
  *         NULL on failure.
  */
-mFILE *find_file_url(char *file, char *url);
+mFILE *find_file_url(char *file, char *url, char **resolved_file);
 
 
 /*
