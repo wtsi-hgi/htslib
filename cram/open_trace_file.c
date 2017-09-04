@@ -164,13 +164,15 @@ char *tokenise_search_path(char *searchpath) {
 }
 
 mFILE *find_file_url(char *file, char *url, char **resolved_file) {
-    char *buf = malloc(8192), *cp;
+    char buf[8192], *cp;
     mFILE *mf = NULL;
     int maxlen = 8190 - strlen(file), len;
-    hFILE *hf;
+	hFILE *hf;
+	
+	*resolved_file = malloc(8192);
 
     /* Expand %s for the trace name */
-    for (cp = buf; *url && cp - buf < maxlen; url++) {
+    for (cp = *resolved_file; *url && cp - *resolved_file < maxlen; url++) {
 	if (*url == '%' && *(url+1) == 's') {
 	    url++;
 	    cp += strlen(strcpy(cp, file));
@@ -180,7 +182,7 @@ mFILE *find_file_url(char *file, char *url, char **resolved_file) {
     }
     *cp++ = 0;
 
-    if (!(hf = hopen(buf, "r")))
+    if (!(hf = hopen(*resolved_file, "r")))
 	return NULL;
 
     if (NULL == (mf = mfcreate(NULL, 0)))
@@ -199,7 +201,6 @@ mFILE *find_file_url(char *file, char *url, char **resolved_file) {
 
     mrewind(mf);
 	
-	*resolved_file = buf;
     return mf;
 }
 
