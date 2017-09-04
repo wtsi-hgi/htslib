@@ -35,9 +35,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "cram/cram_io.h"
 #include "cram/os.h"
 #include "cram/misc.h"
+#include "cram/open_trace_file.h"
 #include "htslib/hfile.h"
 #include "htslib/ref.h"
-#include "htslib/hfile.h"
+#include "hfile_internal.h"
 
 #include <errno.h>
 #include <sys/stat.h>
@@ -186,60 +187,99 @@ void mkdir_prefix(char *path, int mode)
     *cp = '/';
 }
 
-// copied from open_trace_file
+int ref_close(hFILE* hf){
+    int error_code = 0;
+    hFILE_ref *hfref = (hFILE_ref*)hf;
+    free(hfref->file_name);
 
-// Original file from open_trace_file
+    if(hfref->mf)
+        error_code |= mfclose(hfref->mf);
+
+    error_code |= hfref->innerhf->backend->close(hfref->innerhf);
+
+    return error_code;
+}
+
+static ssize_t ref_read(hFILE *fp, void *bufferv, size_t nbytes) {
+    hFILE_ref *hfref = (hFILE_ref*)fp;
+    return hfref->innerhf->backend->read(hfref->innerhf, bufferv, nbytes);
+}
+
+static ssize_t ref_write(hFILE *fp, const void *bufferv, size_t nbytes) {
+    hFILE_ref *hfref = (hFILE_ref*)fp;
+    return hfref->innerhf->backend->write(hfref->innerhf, bufferv, nbytes);
+}
+
+static off_t ref_seek(hFILE *fp, off_t offset, int whence) {
+    hFILE_ref *hfref = (hFILE_ref*)fp;
+    return hfref->innerhf->backend->seek(hfref->innerhf, offset, whence);
+}
+
+static int ref_flush(hFILE *fp) {
+    hFILE_ref *hfref = (hFILE_ref*)fp;
+    if(hfref->innerhf->backend->flush)
+        return hfref->innerhf->backend->flush(hfref->innerhf);
+    else
+        return 0;
+}
+
+static const struct hFILE_backend ref_backend =
+{
+    ref_read, ref_write, ref_seek, ref_flush, ref_close
+};
 
 /*
+ * Modifies the base_hFILE parameter to contain the length and filename information
+ * as a hFILE_ref
 */
-static void init_hFILE_ref(hFILE** base_hFILE, char* file_name, int length){
-    *base_hFILE = realloc(*base_hFILE, sizeof(hFILE_ref));
-    
+static hFILE* open_hfile_ref(hFILE* base_hFILE, char* file_name, int length, mFILE* mf){
+    hFILE_ref* hfref = (hFILE_ref *) hfile_init(sizeof (hFILE_ref), "r", 0);
+
+    hfref->file_name = file_name;
+    hfref->length = length;
+    hfref->mf = mf;
+    hfref->innerhf = base_hFILE;
+    hfref->base.backend = &ref_backend;
+
+    return &hfref->base;
 }
 
 #define READ_CHUNK_SIZE 8192
 
 /*
+ * Puts the char* into a hfile
+*/
+hFILE* mFILE_to_hFILE_ref(mFILE* mf, char* path){
     hFILE *hf = NULL;
+    size_t sz;
+    char* seq;
+    seq = mfsteal(mf, &sz);
 
+    if(!seq){
+        seq = mf->data;
+    }
+    else{
+        mf = NULL;
     }
     
+    // TODO: get the seq into the hFILE
+    hf = hopen(path, "r");
 
-
+    return open_hfile_ref(hf, path, sz, mf);;
 }
 
 // Public functions
 
-int ref_close(Ref* ref){
-    int fail = 0;
-
-    if (ref->bgzf){
-        return bgzf_close(ref->bgzf);
-    }
-    else {
-        free(ref->seq);
-
-        if(ref->mf == NULL){
-            return 0;
-        }
-        else{
-            return mfclose(ref->mf);
-        }
-    }
-}
-
-#define READ_CHUNK_SIZE 8192
-
 int m5_to_ref(const char *m5_str, hFILE** ref) {
     char *ref_path = getenv("REF_PATH");
-    char path[PATH_MAX], path_tmp[PATH_MAX];
+    char *path = malloc(PATH_MAX); // may be exposed to the outside
+    char path_tmp[PATH_MAX];
     char cache[PATH_MAX], cache_root[PATH_MAX];
     char *local_cache = getenv("REF_CACHE");
     hFILE *hf;
 
-    cache_root[0] = '\0';    
+    cache_root[0] = '\0';
 
-    // If ref_path is not defined or some other situation which I don't think happens
     int local_path = 0;
 
     if (!ref_path || *ref_path == '\0') {
@@ -278,23 +318,28 @@ int m5_to_ref(const char *m5_str, hFILE** ref) {
 
     if (local_path){
         struct stat sb;
+        hFILE* innerhf;
 
-        if((0 == stat(path, &sb)) && (*ref = hopen(path, "r"))){
+        if((0 == stat(path, &sb)) && (innerhf = hopen(path, "r"))){
             /* Found via REF_CACHE or local REF_PATH file */
-            // TODO: replicate this
-            /*
-            ref->seq = NULL;
-            ref->sz = sb.st_size;
-            ref->name = path;*/
+            *ref = open_hfile_ref(innerhf, path, sb.st_size, NULL);
+            
             return 0;
         }
     }
 
+    char *resolved_file;
+    mFILE* mf;
     /* Look in ref_path */
-    if (!(hf = open_path_hfile(m5_str, ref_path))) {
-        hts_log_error("Failed to fetch file. REF_PATH: '%s', M5: '%s'", ref_path, m5_str);
+    if (!(mf = open_path_mfile((char*)m5_str, ref_path, NULL, &resolved_file))) {
+        hts_log_info("Failed to fetch file. REF_PATH: '%s', M5: '%s'", ref_path, m5_str);
         return -1;
     }
+
+    *ref = mFILE_to_hFILE_ref(mf, resolved_file);
+
+    // open the hfile separately for testing
+    hf = hopen(resolved_file, "r");
 
     /* Populate the local disk cache if required */
     if (local_cache && *local_cache) {
@@ -334,6 +379,7 @@ int m5_to_ref(const char *m5_str, hFILE** ref) {
         if (!(md5 = hts_md5_init())) {
             hclose_abruptly(fp);
             unlink(path_tmp);
+            
             return -1;
         }
 
@@ -343,13 +389,12 @@ int m5_to_ref(const char *m5_str, hFILE** ref) {
         while ((read_length = hread(hf, buf, READ_CHUNK_SIZE)) > 0) {
             hts_md5_update(md5, buf, read_length);
             if(hwrite(fp, buf, read_length) != read_length){
-                // Kill code
                 perror(path);
                 hclose_abruptly(hf);
                 return -1;
             }
         }
-
+        
         hts_md5_final(md5_buf1, md5);
         hts_md5_destroy(md5);
         hts_md5_hex(md5_buf2, md5_buf1);
@@ -360,18 +405,24 @@ int m5_to_ref(const char *m5_str, hFILE** ref) {
             unlink(path_tmp);
             return -1;
         }
-
-        if (0 == chmod(path_tmp, 0444))
-            rename(path_tmp, path);
-        else
-            unlink(path_tmp);   // TODO: why delete if you can't set to read only
-
-        *ref = fp;
+        if (hclose(fp) < 0)
+		{
+            unlink(path_tmp);
+            
+            return -1; // Can't continue if we don't have a file handle
+		}
+		else
+		{
+			if (0 == chmod(path_tmp, 0444))
+				rename(path_tmp, path);
+			else{
+                unlink(path_tmp);
+                return -1;
+            }
+        }
     }
-    else {
-        // We aren't fetching from the cache or have saved a cached copy
-        *ref = hf;
-    }
+
+    free(path); // not used in exported hfile, so can free
 
     return 0;
 }

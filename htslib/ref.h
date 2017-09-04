@@ -34,6 +34,14 @@ DEALINGS IN THE SOFTWARE.  */
 extern "C" {
 #endif
 
+typedef struct {
+    hFILE base;
+    hFILE* innerhf;
+    int length;
+    char* file_name;
+    void* mf;
+} hFILE_ref;
+
 /* m5_to_ref() - populates the ref parameter with the reference genome 
  * for a given m5 string
  * @param m5_str: The m5 string to query
