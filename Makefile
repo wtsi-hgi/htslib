@@ -366,16 +366,26 @@ tabix.o: tabix.c config.h $(htslib_tbx_h) $(htslib_sam_h) $(htslib_vcf_h) $(htsl
 #
 # If using MSYS, avoid poor shell expansion via:
 #    MSYS2_ARG_CONV_EXCL="*" make check
-check test: $(BUILT_PROGRAMS) $(BUILT_TEST_PROGRAMS)
+check test: $(BUILT_PROGRAMS) $(BUILT_TEST_PROGRAMS) test_ebi_fetch
 	test/hts_endian
 	test/fieldarith test/fieldarith.sam
 	test/hfile
 	test/test_bgzf test/bgziptest.txt
-	test/test-ref
 	cd test/tabix && ./test-tabix.sh tabix.tst
 	REF_PATH=: test/sam test/ce.fa test/faidx.fa
 	test/test-regidx
 	cd test && REF_PATH=: ./test.pl $${TEST_OPTS:-}
+
+test_ebi_fetch:
+	export REF_CACHE=`mktemp -d` && \
+	test/test_view  -t test/xx.fa -S -C test/xx#rg.sam > test/xx#rg.tmp.cram && \
+	test/test_view -D test/xx#rg.tmp.cram > test/xx#rg.tmp.cram.sam_ && \
+	rm -rf $$REF_CACHE
+	export REF_CACHE=`mktemp -d` && \
+	test/test-ref && \
+	test/test-ref && \
+	rm -rf $$REF_CACHE
+
 
 test/hts_endian: test/hts_endian.o
 	$(CC) $(LDFLAGS) -o $@ test/hts_endian.o $(LIBS)

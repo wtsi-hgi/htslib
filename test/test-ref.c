@@ -31,18 +31,6 @@ DEALINGS IN THE SOFTWARE.
 #include <stdio.h>
 #include <string.h>
 
-char * mystrncpy(char *dest, const char *src, size_t n)
-{
-    size_t i;
-
-    for (i = 0; i < n && src[i] != '\0'; i++)
-        dest[i] = src[i];
-    for ( ; i < n; i++)
-        dest[i] = '\0';
-
-    return dest;
-}
-
 int main(int argc, char **argv) {
     const char* m5_str = "bbf4de6d8497a119dda6e074521643dc";
     
@@ -50,55 +38,22 @@ int main(int argc, char **argv) {
     
     hFILE* ref;
     
-    char template[] = "/tmp/htslib_testXXXXXX";
-    char* tmp_dir = mkdtemp(template);
-    
-    if (tmp_dir == NULL){
-        printf("Error creating tmp dir\n");
+    if (m5_to_ref(m5_str, &ref) != 0){
+        fprintf(stderr, "Error in m5_to_ref\n");
         return EXIT_FAILURE;
     }
 
-    char* tmp = getenv("REF_CACHE");
-    char* prev_REF_CACHE;
+    char buf[100];
 
-    if(tmp != NULL){
-        int len = strlen(tmp);
-        prev_REF_CACHE = malloc(len + 1);
-        strcpy(prev_REF_CACHE, tmp);
-    }
-    else{
-        prev_REF_CACHE = NULL;
+    size_t size_read = hread(ref, buf, 100);
+    if(size_read <= 0){
+        fprintf(stderr, "Invalid hfile size read\n");
+        return EXIT_FAILURE;
     }
 
-    setenv("REF_CACHE", template, 1);    
-    
-    int i;
-
-    for(i = 0;i < 2;i++){
-        if (m5_to_ref(m5_str, &ref) != 0){
-            printf("Error in m5_to_ref\n");
-            error_code = EXIT_FAILURE;
-            break;
-        }
-
-        char buf[100];
-
-        size_t size_read = hread(ref, buf, 100);
-        if(size_read <= 0){
-            printf("Invalid hfile size read\n");
-            error_code = EXIT_FAILURE;
-            break;
-        }
-
-        if(hclose(ref) != 0){
-            printf("Cannot close hfile");
-            error_code = EXIT_FAILURE;
-            break;
-        }
-    }
-
-    if(prev_REF_CACHE){
-        setenv("REF_CACHE", prev_REF_CACHE, 1);
+    if(hclose(ref) != 0){
+        fprintf(stderr, "Cannot close hfile\n");
+        return EXIT_FAILURE;
     }
     
     return error_code;

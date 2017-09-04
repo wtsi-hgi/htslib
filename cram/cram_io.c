@@ -1921,7 +1921,7 @@ static int cram_populate_ref(cram_fd *fd, int id, ref_entry *r) {
 	const char* m5_str = tag->str+3;
 	hts_log_info("Querying ref %s", m5_str);
 
-	Ref ref;
+	hFILE* ref;
 	
 	if(no_m5 || m5_to_ref(m5_str, &ref) != 0){
 		refs_t *refs;
@@ -1963,22 +1963,19 @@ static int cram_populate_ref(cram_fd *fd, int id, ref_entry *r) {
 		return 0;
 	}
 
-	r->length = ref.sz;
+	hFILE_ref *hfref = (hFILE_ref*)ref;
+
+	r->length = hfref->length;
 	r->is_md5 = 1;
 
-	if(ref.name){
-		r->offset = r->line_length = r->bases_per_line = 0;
-		// set the fp and fn to the value returned by m5_to_ref
-		r->fn = string_dup(fd->refs->pool, ref.name);
-		if (fd->refs->fp)
-			if (bgzf_close(fd->refs->fp) != 0)
-				return -1;
-		fd->refs->fp = ref.bgzf;
-		fd->refs->fn = r->fn;
-	} else {
-		r->seq = ref.seq;
-		r->mf = ref.mf;
-	}
+	r->offset = r->line_length = r->bases_per_line = 0;
+	// set the fp and fn to the value returned by m5_to_ref
+	r->fn = string_dup(fd->refs->pool, hfref->file_name);
+	if (fd->refs->fp)
+		if (bgzf_close(fd->refs->fp) != 0)
+			return -1;
+	fd->refs->fp = bgzf_hopen(ref, "r");
+	fd->refs->fn = r->fn;
 
     return 0;
 }
@@ -2121,29 +2118,29 @@ ref_entry *cram_ref_load(refs_t *r, int id, int is_md5) {
     assert(e->count == 0);
 
     if (r->last) {
-#ifdef REF_DEBUG
-	int idx = 0;
-	for (idx = 0; idx < r->nref; idx++)
-	    if (r->last == r->ref_id[idx])
-		break;
-	RP("%d cram_ref_load DECR %d\n", gettid(), idx);
-#endif
-	assert(r->last->count > 0);
-	if (--r->last->count <= 0) {
-	    RP("%d FREE REF %d (%p)\n", gettid(), id, r->ref_id[id]->seq);
-	    if (r->last->seq)
-		ref_entry_free_seq(r->last);
-	}
+	#ifdef REF_DEBUG
+		int idx = 0;
+		for (idx = 0; idx < r->nref; idx++)
+			if (r->last == r->ref_id[idx])
+			break;
+		RP("%d cram_ref_load DECR %d\n", gettid(), idx);
+	#endif
+		assert(r->last->count > 0);
+		if (--r->last->count <= 0) {
+			RP("%d FREE REF %d (%p)\n", gettid(), id, r->ref_id[id]->seq);
+			if (r->last->seq)
+			ref_entry_free_seq(r->last);
+		}
     }
 
     /* Open file if it's not already the current open reference */
     if (strcmp(r->fn, e->fn) || r->fp == NULL) {
-	if (r->fp)
-	    if (bgzf_close(r->fp) != 0)
-		return NULL;
-	r->fn = e->fn;
-	if (!(r->fp = bgzf_open_ref(r->fn, "r", is_md5)))
-	    return NULL;
+		if (r->fp)
+			if (bgzf_close(r->fp) != 0)
+				return NULL;
+		r->fn = e->fn;
+		if (!(r->fp = bgzf_open_ref(r->fn, "r", is_md5)))
+			return NULL;
     }
 
     RP("%d Loading ref %d (%d..%d)\n", gettid(), id, start, end);
