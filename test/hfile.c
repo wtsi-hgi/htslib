@@ -202,6 +202,38 @@ int main(void)
     if ((c = hgetc(fin)) != EOF) fail("chars: hgetc (EOF) returned %d", c);
     if (hclose(fin) != 0) fail("hclose(test/hfile_chars.tmp) for reading");
 
+    fin = hopen("test/hfile_chars.tmp", "r:", "preload");
+    if (fin == NULL) fail("preloading hopen(\"test/hfile_chars.tmp\") for reading");
+    for (i = 0; i < 256; i++)
+        if ((c = hgetc(fin)) != i)
+            fail("preloading chars: hgetc (%d = 0x%x) returned %d = 0x%x", i, i, c, c);
+    if ((c = hgetc(fin)) != EOF) fail("preloading chars: hgetc (EOF) returned %d", c);
+    if (hclose(fin) != 0) fail("preloading hclose(test/hfile_chars.tmp) for reading");
+
+    char* test_string = strdup("Test string");
+    fin = hopen("mem:", "r:", test_string, 12);
+    if (fin == NULL) fail("hopen(\"mem:\", \"r:\", ...)");
+    if (hread(fin, buffer, 12) != 12)
+        fail("hopen mem failed read");
+    if(strcmp(buffer, test_string) != 0)
+        fail("hopen mem missread '%s' != '%s'", buffer, test_string);
+    if (hclose(fin) != 0) fail("hclose mem for reading");
+
+    test_string = strdup("Test string");
+    fin = hopen("mem:", "w:", test_string, 12);
+    if (fin == NULL) fail("hopen(\"mem:\", \"w:\", ...)");
+    if (hseek(fin, -1, SEEK_END) < 0)
+        fail("hopen mem failed seek");
+    if (hwrite(fin, strdup(" extra"), 7) != 7)
+        fail("hopen mem failed write");
+    size_t new_buffer_length;
+    char* new_buffer;
+    hfile_mem_get_buffer(fin, (void**)&new_buffer, &new_buffer_length);
+    if (strcmp(new_buffer, "Test string extra") != 0)
+        fail("hopen mem misswrote '%s' != '%s'", new_buffer, "Test string extra");
+    if (hclose(fin) != 0) fail("hclose mem for writing");
+    if (hfile_mem_free_buffer(fin) != 0) fail("hfile mem failed to free buffer");
+
     fin = hopen("data:,hello, world!%0A", "r");
     if (fin == NULL) fail("hopen(\"data:...\")");
     n = hread(fin, buffer, 300);
