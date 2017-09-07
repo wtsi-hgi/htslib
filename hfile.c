@@ -615,6 +615,47 @@ error:
     return NULL;
 }
 
+static hFILE *hpreload_fd(const char *filename, const char *mode)
+{
+    if(!strchr(mode, 'r'))
+    {
+        return NULL;
+    }
+    
+    hFILE_fd *fp = NULL;
+    FILE *file = fopen(filename, mode);
+    if (!file) goto error;
+
+    fseek(file, 0, SEEK_END);
+    int len = ftell(file);
+    fseek(file, 0, SEEK_SET);
+
+    char* buffer = malloc(len);
+    if(buffer == NULL)
+    {
+        errno = ENOMEM;
+        goto error;
+    }
+    if(fread(buffer, 1, len, file) != len)
+    {
+        errno = EIO;
+        goto error;
+    }
+
+    fp = (hFILE_fd *) hfile_init_fixed(sizeof (hFILE_fd), mode, buffer, len, len);
+    if (fp == NULL) goto error;
+
+    fp->fd = fileno(file);
+    fp->is_socket = 0;
+    fp->base.backend = &fd_backend;
+    return &fp->base;
+
+error:
+    if (file) { int save = errno; (void) fclose(file); errno = save; }
+    hfile_destroy((hFILE *) fp);
+    return NULL;
+}
+
 hFILE *hdopen(int fd, const char *mode)
 {
     hFILE_fd *fp = (hFILE_fd*) hfile_init(sizeof (hFILE_fd), mode, blksize(fd));
@@ -821,6 +862,29 @@ static int init_add_plugin(void *obj, int (*init)(struct hFILE_plugin *),
     return 0;
 }
 
+hFILE *hopenv_mem(const char *filename, const char *mode, va_list args)
+{
+    char* buffer = va_arg(args, char*);
+    size_t sz = va_arg(args, size_t);
+    va_end(args);
+
+    hFILE_mem *fp = (hFILE_mem *) hfile_init_fixed(sizeof(hFILE_mem), mode, buffer, sz, sz);
+    
+    fp->base.backend = &mem_backend;
+
+    return &fp->base;
+}
+
+int hfile_plugin_init_mem(struct hFILE_plugin *self)
+{
+    // mem files are declared remote so they work with a tabix index
+    static const struct hFILE_scheme_handler handler =
+            {NULL, hfile_always_remote, "mem", 2000 + 50, hopenv_mem};
+    self->name = "mem";
+    hfile_add_scheme_handler("mem", &handler);
+    return 0;
+}
+
 static void load_hfile_plugins()
 {
     static const struct hFILE_scheme_handler
@@ -879,11 +943,29 @@ static hFILE *hopen_unknown_scheme(const char *fname, const char *mode)
     return fp;
 }
 
+/* A filename like "foo:bar" in which we don't recognise the scheme is
+   either an ordinary file or an indication of a missing or broken plugin.
+   Try to open it as an ordinary file; but if there's no such file, set
+   errno distinctively to make the plugin issue apparent.  */
+static hFILE *hopenv_unknown_scheme(const char *fname, const char *mode, va_list args)
+{
+    char* method_type = va_arg(args, char*);
+    va_end(args);
+    if(!strcmp(method_type, "preload")){
+        errno = EPROTONOSUPPORT;
+        return NULL;
+    }
+
+    hFILE *fp = hpreload_fd(fname, mode);
+    if (fp == NULL && errno == ENOENT) errno = EPROTONOSUPPORT;
+    return fp;
+}
+
 /* Returns the appropriate handler, or NULL if the string isn't an URL.  */
 static const struct hFILE_scheme_handler *find_scheme_handler(const char *s)
 {
     static const struct hFILE_scheme_handler unknown_scheme =
-        { hopen_unknown_scheme, hfile_always_local, "built-in", 0 };
+        { hopen_unknown_scheme, hfile_always_local, "built-in", 2000 + 50, hopenv_unknown_scheme };
 
     char scheme[12];
     int i;
