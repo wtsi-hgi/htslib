@@ -1987,7 +1987,6 @@ static int cram_populate_ref(cram_fd *fd, int id, ref_entry *r) {
 		
 		r->seq = seq;
 		r->mf = hfref->mf;
-		hts_log_error("Success");
 	}
 	
 
