@@ -875,6 +875,18 @@ hFILE *hopenv_mem(const char *filename, const char *mode, va_list args)
     return &fp->base;
 }
 
+int hfile_mem_get_buffer(hFILE *file, char **buffer, size_t *length){
+    if(file->backend != &mem_backend) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    *buffer = file->buffer;
+    *length = file->buffer - file->limit;
+
+    return 0;
+}
+
 int hfile_plugin_init_mem(struct hFILE_plugin *self)
 {
     // mem files are declared remote so they work with a tabix index

@@ -262,6 +262,11 @@ This includes low-level flushing such as via `fdatasync(2)`.
 */
 int hflush(hFILE *fp) HTS_RESULT_USED;
 
+/// For hfile_mem: get the internal buffer and it's size from a hfile
+/** @return  0 if successful, or -1 if an error occurred
+*/
+int hfile_mem_get_buffer(hFILE *file, char **buffer, size_t *length);
+
 #ifdef __cplusplus
 }
 #endif
