@@ -262,8 +262,7 @@ hFILE* mFILE_to_hFILE_ref(mFILE* mf, char* path){
         mf = NULL;
     }
     
-    // TODO: get the seq into the hFILE
-    hf = hopen(path, "r");
+    hf = hopen("mem:", "r:", seq, sz);
 
     return open_hfile_ref(hf, path, sz, mf);;
 }
