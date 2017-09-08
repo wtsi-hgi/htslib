@@ -214,25 +214,25 @@ int main(void)
     fin = hopen("mem:", "r:", test_string, 12);
     if (fin == NULL) fail("hopen(\"mem:\", \"r:\", ...)");
     if (hread(fin, buffer, 12) != 12)
-        fail("hopen mem failed read");
+        fail("hopen('mem:', 'r') failed read");
     if(strcmp(buffer, test_string) != 0)
-        fail("hopen mem missread '%s' != '%s'", buffer, test_string);
+        fail("hopen('mem:', 'r') missread '%s' != '%s'", buffer, test_string);
     if (hclose(fin) != 0) fail("hclose mem for reading");
 
     test_string = strdup("Test string");
-    fin = hopen("mem:", "w:", test_string, 12);
+    fin = hopen("mem:", "wr:", test_string, 12);
     if (fin == NULL) fail("hopen(\"mem:\", \"w:\", ...)");
     if (hseek(fin, -1, SEEK_END) < 0)
-        fail("hopen mem failed seek");
-    if (hwrite(fin, strdup(" extra"), 7) != 7)
-        fail("hopen mem failed write");
-    size_t new_buffer_length;
-    char* new_buffer;
-    hfile_mem_get_buffer(fin, (void**)&new_buffer, &new_buffer_length);
-    if (strcmp(new_buffer, "Test string extra") != 0)
-        fail("hopen mem misswrote '%s' != '%s'", new_buffer, "Test string extra");
+        fail("hopen('mem:', 'wr') failed seek");
+    if (hwrite(fin, strdup(" extra"), 6) != 6)
+        fail("hopen('mem:', 'wr') failed write");
+    if (hseek(fin, 0, SEEK_SET) < 0)
+        fail("hopen('mem:', 'wr') failed seek");
+    if (hread(fin, buffer, 18) != 18)
+        fail("hopen('mem:', 'wr') failed read");
+    if (strcmp(buffer, "Test string extra") != 0)
+        fail("hopen('mem:', 'wr') misswrote '%s' != '%s'", buffer, "Test string extra");
     if (hclose(fin) != 0) fail("hclose mem for writing");
-    if (hfile_mem_free_buffer(fin) != 0) fail("hfile mem failed to free buffer");
 
     fin = hopen("data:,hello, world!%0A", "r");
     if (fin == NULL) fail("hopen(\"data:...\")");
