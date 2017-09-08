@@ -404,7 +404,7 @@ off_t hseek(hFILE *fp, off_t offset, int whence)
 {
     off_t curpos, pos;
 
-    if (writebuffer_is_nonempty(fp)) {
+    if (writebuffer_is_nonempty(fp) && fp->mobile) {
         int ret = flush_buffer(fp);
         if (ret < 0) return ret;
     }
@@ -897,6 +897,7 @@ static void load_hfile_plugins()
     hfile_add_scheme_handler("data", &data);
     hfile_add_scheme_handler("file", &file);
     init_add_plugin(NULL, hfile_plugin_init_net, "knetfile");
+    init_add_plugin(NULL, hfile_plugin_init_mem, "mem");
 
 #ifdef ENABLE_PLUGINS
     struct hts_path_itr path;

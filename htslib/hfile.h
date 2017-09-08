@@ -243,7 +243,8 @@ hwrite(hFILE *fp, const void *buffer, size_t nbytes)
     
     if(!fp->mobile){
         if (fp->limit - fp->begin < nbytes){
-            hfile_set_blksize(fp, fp->begin - fp->buffer + nbytes);
+            hfile_set_blksize(fp, fp->limit - fp->buffer + nbytes);
+            fp->end = fp->limit;
         }
     }
     
