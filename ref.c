@@ -232,7 +232,7 @@ static const struct hFILE_backend ref_backend =
  * Modifies the base_hFILE parameter to contain the length and filename information
  * as a hFILE_ref
 */
-static hFILE* open_hfile_ref(hFILE* base_hFILE, char* file_name, int length, mFILE* mf){
+static hFILE* open_hfile_ref(hFILE* base_hFILE, char* file_name, int length, mFILE* mf, int is_mem_hfile){
     hFILE_ref* hfref = (hFILE_ref *) hfile_init(sizeof (hFILE_ref), "r", 0);
 
     hfref->file_name = file_name;
@@ -240,6 +240,7 @@ static hFILE* open_hfile_ref(hFILE* base_hFILE, char* file_name, int length, mFI
     hfref->mf = mf;
     hfref->innerhf = base_hFILE;
     hfref->base.backend = &ref_backend;
+    hfref->is_mem_hfile = is_mem_hfile;
 
     return &hfref->base;
 }
@@ -264,7 +265,7 @@ hFILE* mFILE_to_hFILE_ref(mFILE* mf, char* path){
     
     hf = hopen("mem:", "r:", seq, sz);
 
-    return open_hfile_ref(hf, path, sz, mf);;
+    return open_hfile_ref(hf, path, sz, mf, 1);
 }
 
 // Public functions
@@ -321,7 +322,7 @@ int m5_to_ref(const char *m5_str, hFILE** ref) {
 
         if((0 == stat(path, &sb)) && (innerhf = hopen(path, "r"))){
             /* Found via REF_CACHE or local REF_PATH file */
-            *ref = open_hfile_ref(innerhf, path, sb.st_size, NULL);
+            *ref = open_hfile_ref(innerhf, path, sb.st_size, NULL, 0);
             
             return 0;
         }

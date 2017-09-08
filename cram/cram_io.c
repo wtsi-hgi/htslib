@@ -1968,14 +1968,25 @@ static int cram_populate_ref(cram_fd *fd, int id, ref_entry *r) {
 	r->length = hfref->length;
 	r->is_md5 = 1;
 
-	r->offset = r->line_length = r->bases_per_line = 0;
-	// set the fp and fn to the value returned by m5_to_ref
-	r->fn = string_dup(fd->refs->pool, hfref->file_name);
-	if (fd->refs->fp)
-		if (bgzf_close(fd->refs->fp) != 0)
-			return -1;
-	fd->refs->fp = bgzf_hopen(ref, "r");
-	fd->refs->fn = r->fn;
+	if(hfref->is_mem_hfile){
+		r->offset = r->line_length = r->bases_per_line = 0;
+		// set the fp and fn to the value returned by m5_to_ref
+		r->fn = string_dup(fd->refs->pool, hfref->file_name);
+		if (fd->refs->fp)
+			if (bgzf_close(fd->refs->fp) != 0)
+				return -1;
+		fd->refs->fp = bgzf_hopen(ref, "r");
+		fd->refs->fn = r->fn;
+	}
+	else{
+		char* seq;
+		size_t seq_sz;
+		hfile_mem_get_buffer(ref, &seq, &seq_sz);
+		free(ref); // Can't hclose as this would free the buffer
+
+		r->seq = seq;
+		r->mf = hfref->mf;
+	}
 
     return 0;
 }

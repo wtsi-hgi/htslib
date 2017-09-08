@@ -40,6 +40,7 @@ typedef struct {
     int length;
     char* file_name;
     void* mf;
+    int is_mem_hfile;
 } hFILE_ref;
 
 /* m5_to_ref() - populates the ref parameter with the reference genome 
