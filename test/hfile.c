@@ -224,7 +224,7 @@ int main(void)
     if (fin == NULL) fail("hopen(\"mem:\", \"w:\", ...)");
     if (hseek(fin, -1, SEEK_END) < 0)
         fail("hopen('mem:', 'wr') failed seek");
-    if (hwrite(fin, strdup(" extra"), 6) != 6)
+    if (hwrite(fin, strdup(" extra"), 7) != 7)
         fail("hopen('mem:', 'wr') failed write");
     if (hseek(fin, 0, SEEK_SET) < 0)
         fail("hopen('mem:', 'wr') failed seek");
