@@ -195,30 +195,30 @@ int ref_close(hFILE* hf){
     if(hfref->mf)
         error_code |= mfclose(hfref->mf);
 
-    error_code |= hfref->innerhf->backend->close(hfref->innerhf);
+    error_code |= hclose(hfref->innerhf);
 
     return error_code;
 }
 
 static ssize_t ref_read(hFILE *fp, void *bufferv, size_t nbytes) {
     hFILE_ref *hfref = (hFILE_ref*)fp;
-    return hfref->innerhf->backend->read(hfref->innerhf, bufferv, nbytes);
+    return hread(hfref->innerhf, bufferv, nbytes);
 }
 
 static ssize_t ref_write(hFILE *fp, const void *bufferv, size_t nbytes) {
     hFILE_ref *hfref = (hFILE_ref*)fp;
-    return hfref->innerhf->backend->write(hfref->innerhf, bufferv, nbytes);
+    return hwrite(hfref->innerhf, bufferv, nbytes);
 }
 
 static off_t ref_seek(hFILE *fp, off_t offset, int whence) {
     hFILE_ref *hfref = (hFILE_ref*)fp;
-    return hfref->innerhf->backend->seek(hfref->innerhf, offset, whence);
+    return hseek(hfref->innerhf, offset, whence);
 }
 
 static int ref_flush(hFILE *fp) {
     hFILE_ref *hfref = (hFILE_ref*)fp;
     if(hfref->innerhf->backend->flush)
-        return hfref->innerhf->backend->flush(hfref->innerhf);
+        return hflush(hfref->innerhf);
     else
         return 0;
 }
@@ -336,10 +336,7 @@ int m5_to_ref(const char *m5_str, hFILE** ref) {
         return -1;
     }
 
-    *ref = mFILE_to_hFILE_ref(mf, resolved_file);
-
-    // open the hfile separately for testing
-    hf = hopen(resolved_file, "r");
+    hf = *ref = mFILE_to_hFILE_ref(mf, resolved_file);
 
     /* Populate the local disk cache if required */
     if (local_cache && *local_cache) {
@@ -394,6 +391,9 @@ int m5_to_ref(const char *m5_str, hFILE** ref) {
                 return -1;
             }
         }
+
+        if(hseek(hf, 0, SEEK_SET))
+            return -1;
         
         hts_md5_final(md5_buf1, md5);
         hts_md5_destroy(md5);

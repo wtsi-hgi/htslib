@@ -1962,31 +1962,34 @@ static int cram_populate_ref(cram_fd *fd, int id, ref_entry *r) {
 		// Local copy already, so fall back to cram_get_ref().
 		return 0;
 	}
-
+	
 	hFILE_ref *hfref = (hFILE_ref*)ref;
-
+	
 	r->length = hfref->length;
 	r->is_md5 = 1;
-
-	if(hfref->is_mem_hfile){
+	
+	if(!hfref->is_mem_hfile){
 		r->offset = r->line_length = r->bases_per_line = 0;
 		// set the fp and fn to the value returned by m5_to_ref
 		r->fn = string_dup(fd->refs->pool, hfref->file_name);
 		if (fd->refs->fp)
-			if (bgzf_close(fd->refs->fp) != 0)
-				return -1;
+		if (bgzf_close(fd->refs->fp) != 0)
+		return -1;
 		fd->refs->fp = bgzf_hopen(ref, "r");
 		fd->refs->fn = r->fn;
 	}
 	else{
 		char* seq;
 		size_t seq_sz;
-		hfile_mem_get_buffer(ref, &seq, &seq_sz);
+		if(hfile_mem_get_buffer(hfref->innerhf, &seq, &seq_sz))
+			return -1;
 		free(ref); // Can't hclose as this would free the buffer
-
+		
 		r->seq = seq;
 		r->mf = hfref->mf;
+		hts_log_error("Success");
 	}
+	
 
     return 0;
 }

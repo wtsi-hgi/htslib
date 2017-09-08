@@ -379,7 +379,8 @@ check test: $(BUILT_PROGRAMS) $(BUILT_TEST_PROGRAMS) test_ebi_fetch
 test_ebi_fetch:
 	export REF_CACHE=`mktemp -d` && \
 	test/test_view  -t test/xx.fa -S -C test/xx#rg.sam > test/xx#rg.tmp.cram && \
-	test/test_view -D test/xx#rg.tmp.cram > test/xx#rg.tmp.cram.sam_ && \
+	test/test_view -D test/xx#rg.tmp.cram > /dev/null && \
+	test/test_view -D test/xx#rg.tmp.cram > /dev/null && \
 	rm -rf $$REF_CACHE
 	export REF_CACHE=`mktemp -d` && \
 	test/test-ref && \

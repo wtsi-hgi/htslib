@@ -202,7 +202,7 @@ hread(hFILE *fp, void *buffer, size_t nbytes)
     if (n > nbytes) n = nbytes;
     memcpy(buffer, fp->begin, n);
     fp->begin += n;
-    return (n == nbytes)? (ssize_t) n : hread2(fp, buffer, nbytes, n);
+    return (n == nbytes || !fp->mobile)? (ssize_t) n : hread2(fp, buffer, nbytes, n);
 }
 
 /// Write a character to the stream
